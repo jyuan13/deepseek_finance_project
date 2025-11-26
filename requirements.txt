@@ -1,0 +1,6 @@
+pandas>=2.0.0
+numpy>=1.24.0
+yfinance>=0.2.18
+ta-lib>=0.4.24
+requests>=2.31.0
+python-dateutil>=2.8.2
