@@ -7,30 +7,49 @@ from datetime import datetime
 import glob
 
 class DeepSeekClient:
-    def __init__(self, api_key=None, base_url="https://api.deepseek.com", conversation_dir="conversations"):
+    def __init__(self, api_key=None, base_url=None, provider="qwen", conversation_dir="conversations"):
         """
-        初始化DeepSeek客户端
+        初始化多模态客户端 (支持 DeepSeek 和 Qwen)
+        :param api_key: API Key
+        :param base_url: 自定义 Base URL (可选)
+        :param provider: 模型供应商 ("deepseek" 或 "qwen")
+        :param conversation_dir: 对话历史保存目录
         """
-        self.api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
+        self.provider = provider.lower()
+        self.conversation_dir = conversation_dir
+        self.current_conversation_file = None
+        self.conversation_history = []
+        
+        # --- 供应商配置初始化 ---
+        if self.provider == "qwen":
+            # 优先读取 Qwen_API_KEY，其次尝试 DASHSCOPE_API_KEY
+            self.api_key = api_key or os.environ.get("Qwen_API_KEY") or os.environ.get("DASHSCOPE_API_KEY")
+            self.base_url = base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            self.models = {
+                "chat": "qwen-plus",
+                "reasoner": "qwen-plus",  # Qwen-plus 配合 enable_thinking=True
+                "latest": "qwen-max"
+            }
+            print(f"🔧 初始化 Qwen 客户端 (Model: {self.models['chat']})")
+            
+        else: # 默认为 deepseek
+            self.api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
+            self.base_url = base_url or "https://api.deepseek.com"
+            self.models = {
+                "chat": "deepseek-chat",
+                "reasoner": "deepseek-reasoner",
+                "latest": "deepseek-chat"
+            }
+            print(f"🔧 初始化 DeepSeek 客户端 (Model: {self.models['chat']})")
+
         if not self.api_key:
-            raise ValueError("未提供API密钥，请设置DEEPSEEK_API_KEY环境变量或在初始化时传入api_key参数")
+            env_var_name = 'Qwen_API_KEY' if self.provider == 'qwen' else 'DEEPSEEK_API_KEY'
+            raise ValueError(f"❌ 未找到 {self.provider} 的API密钥！请设置环境变量 {env_var_name} 或在初始化时传入")
         
         self.client = OpenAI(
             api_key=self.api_key,
-            base_url=base_url
+            base_url=self.base_url
         )
-        
-        # 可用模型配置
-        self.models = {
-            "chat": "deepseek-chat",
-            "reasoner": "deepseek-reasoner",
-            "latest": "deepseek-chat"
-        }
-        
-        # 对话历史
-        self.conversation_history = []
-        self.conversation_dir = conversation_dir
-        self.current_conversation_file = None
         
         # 创建对话目录
         if conversation_dir and not os.path.exists(conversation_dir):
@@ -114,7 +133,7 @@ class DeepSeekClient:
             return False
             
     def clear_all_conversations(self):
-        """[新增] 清空所有对话文件"""
+        """清空所有对话文件"""
         if not self.conversation_dir or not os.path.exists(self.conversation_dir):
             return True
         
@@ -182,9 +201,10 @@ class DeepSeekClient:
         print("✓ 当前对话历史已清空")
     
     def chat(self, message, model_type="chat", system_prompt="You are a helpful assistant", use_history=True):
-        """与DeepSeek进行对话"""
+        """与模型进行对话 (自动适配 Qwen/DeepSeek)"""
         if model_type not in self.models:
-            raise ValueError(f"不支持的模型类型: {model_type}，可选: {list(self.models.keys())}")
+            print(f"⚠ 模型类型 {model_type} 未找到，回退到 chat 模式")
+            model_type = "chat"
         
         model = self.models[model_type]
         
@@ -198,11 +218,20 @@ class DeepSeekClient:
         # 添加当前用户消息
         messages.append({"role": "user", "content": message})
         
+        # --- Qwen 特有配置: 开启思考模式 ---
+        extra_body = {}
+        # 如果是 Qwen 且 (显式请求 reasoner 或 使用的是 qwen-plus/max)
+        if self.provider == "qwen" and (model_type == "reasoner" or "plus" in model or "max" in model):
+            # 强制开启 Qwen 的思考能力
+            extra_body["enable_thinking"] = True
+            print("🧠 Qwen 深度思考模式已激活...")
+        
         try:
             response = self.client.chat.completions.create(
                 model=model,
                 messages=messages,
-                stream=True
+                stream=True,
+                extra_body=extra_body if extra_body else None
             )
             
             result = self._handle_stream_response(response, model_type)
@@ -210,6 +239,7 @@ class DeepSeekClient:
             # 保存到历史记录
             if use_history:
                 self.add_to_history("user", message)
+                # 注意：这里我们只保存最终回复内容到历史，思考过程通常不作为对话历史上下文
                 self.add_to_history("assistant", result["content"])
             
             return result
@@ -217,41 +247,72 @@ class DeepSeekClient:
         except Exception as e:
             return {
                 "content": f"API调用错误: {str(e)}",
+                "reasoning": "",
                 "usage": None,
                 "cost": 0.0
             }
     
     def _handle_stream_response(self, response, model_type):
-        """处理流式响应并收集使用统计"""
+        """处理流式响应 (支持 Qwen 的 reasoning_content)"""
         full_response = ""
-        print("DeepSeek回复: ", end="", flush=True)
-        
+        full_reasoning = ""
+        is_answering = False
         usage_info = None
         
+        print(f"\n[{self.provider.upper()}] 回复: ", end="", flush=True)
+        
+        # 打印思考过程分隔线 (针对 Qwen)
+        if self.provider == "qwen":
+            print("\n" + "="*15 + " 思考过程 " + "="*15 + "\n", end="", flush=True)
+
         for chunk in response:
-            if chunk.choices[0].delta.content:
-                content = chunk.choices[0].delta.content
-                print(content, end="", flush=True)
-                full_response += content
-            
+            # 1. 捕获 Usage 信息 (Qwen通常在最后返回，或者通过 stream_options 获取)
             if hasattr(chunk, 'usage') and chunk.usage:
                 usage_info = chunk.usage
+                # Qwen 有时会在最后一个chunk返回usage，但不一定带choices
+                if not chunk.choices:
+                    continue
+            
+            if not chunk.choices:
+                continue
+                
+            delta = chunk.choices[0].delta
+            
+            # 2. 处理思考内容 (Qwen 特有字段 reasoning_content)
+            # 兼容不同 SDK 版本，有的在 delta 属性里，有的可能需要 getattr
+            reasoning = getattr(delta, 'reasoning_content', None)
+            
+            if reasoning:
+                print(reasoning, end="", flush=True)
+                full_reasoning += reasoning
+            
+            # 3. 处理正式回复内容
+            if hasattr(delta, 'content') and delta.content:
+                # 如果从思考转为回复，打印分隔线
+                if full_reasoning and not is_answering:
+                    print("\n\n" + "="*15 + " 完整回复 " + "="*15 + "\n", end="", flush=True)
+                    is_answering = True
+                elif not full_reasoning and not is_answering and self.provider == "qwen": 
+                    # 针对 Qwen，如果一开始就是 content (没有思考)，也标记一下
+                    print("\n\n" + "="*15 + " 完整回复 " + "="*15 + "\n", end="", flush=True)
+                    is_answering = True
+                
+                print(delta.content, end="", flush=True)
+                full_response += delta.content
         
-        print()  # 换行
+        print("\n")  # 结束换行
         
-        # 计算费用
+        # 计算费用 (粗略估算)
         cost = 0.0
         if usage_info:
             input_tokens = usage_info.prompt_tokens
             output_tokens = usage_info.completion_tokens
-            
-            if model_type == "chat":
-                cost = (input_tokens * 0.14 + output_tokens * 0.28) / 1_000_000
-            else:  # reasoner
-                cost = (input_tokens * 0.56 + output_tokens * 1.12) / 1_000_000
+            # 这里仅做简单示例，实际费率需根据模型调整
+            cost = (input_tokens * 0.004 + output_tokens * 0.012) / 1000 
         
         return {
             "content": full_response,
+            "reasoning": full_reasoning,
             "usage": usage_info,
             "cost": cost
         }
@@ -262,8 +323,8 @@ class DeepSeekClient:
         if not self.current_conversation_file and self.conversation_dir:
             self.start_new_conversation()
         
-        print(f"=== DeepSeek API 交互模式 ===")
-        print(f"模型: {model_type}")
+        print(f"=== {self.provider.upper()} API 交互模式 ===")
+        print(f"模型: {self.models.get(model_type, model_type)}")
         if self.current_conversation_file:
             print(f"当前对话文件: {os.path.basename(self.current_conversation_file)}")
         print(f"对话历史: {len(self.conversation_history)} 条消息")
