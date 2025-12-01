@@ -1,9 +1,11 @@
+# deepseek_finance_project_V2/strategy_evolution.py
+
 import sqlite3
 import json
 import datetime
 import yfinance as yf
 from typing import Dict, Any, List, Optional
-from deepseek_client import DeepSeekClient  # 假设您有这个客户端
+from deepseek_client import DeepSeekClient 
 
 class StrategyEvolutionEngine:
     """
@@ -61,6 +63,20 @@ class StrategyEvolutionEngine:
         ''')
         
         self.conn.commit()
+
+    def reset_evolution_data(self):
+        """[新增] 重置所有进化数据"""
+        try:
+            self.cursor.execute("DROP TABLE IF EXISTS predictions")
+            self.cursor.execute("DROP TABLE IF EXISTS lessons")
+            self.cursor.execute("DROP TABLE IF EXISTS performance_stats")
+            self.conn.commit()
+            self._init_db()
+            print("✅ 策略进化数据库已重置")
+            return True
+        except Exception as e:
+            print(f"❌ 策略进化数据重置失败: {e}")
+            return False
 
     def log_prediction(self, symbol: str, etf_name: str, input_data: Dict, ai_response: Dict):
         """

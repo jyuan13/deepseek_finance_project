@@ -1,3 +1,5 @@
+# deepseek_finance_project_V2/data_manager.py
+
 import os
 import pandas as pd
 import json
@@ -42,6 +44,22 @@ class DataManager:
         except Exception as e:
             print(f"❌ 加载数据失败: {e}")
             return None
+            
+    def clear_all_data(self):
+        """[新增] 清空所有数据文件"""
+        try:
+            files = self.list_saved_data()
+            if not files:
+                print("⚠️  没有可清除的数据文件")
+                return True
+                
+            for f in files:
+                os.remove(os.path.join(self.data_dir, f))
+            print(f"✅ 已清除 {len(files)} 个历史数据文件")
+            return True
+        except Exception as e:
+            print(f"❌ 数据清除失败: {e}")
+            return False
     
     def manage_data(self):
         """数据管理交互界面"""
@@ -51,7 +69,7 @@ class DataManager:
         while True:
             print("\n1. 查看已保存的数据")
             print("2. 删除数据文件") 
-            print("3. 清理缓存数据")
+            print("3. 清理缓存数据 (清空所有)")
             print("0. 返回主菜单")
             print("-" * 40)
             
@@ -87,8 +105,9 @@ class DataManager:
                     print("❌ 没有可删除的文件")
             
             elif choice == "3":
-                # 清理30天前的缓存文件
-                print("清理功能开发中...")
+                confirm = input("⚠️ 确定要清空所有数据文件吗? (y/n): ").lower()
+                if confirm == 'y':
+                    self.clear_all_data()
             
             elif choice == "0":
                 break

@@ -2,236 +2,269 @@
 
 import yfinance as yf
 import akshare as ak
-import talib
 import time
 import random
 import pandas as pd
-import mplfinance as mpf
-import matplotlib.pyplot as plt
+import numpy as np
 from datetime import datetime, timedelta
-import os
-import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# 尝试导入 TA-Lib，如果没有则使用 Pandas 兼容模式
+try:
+    import talib
+    HAS_TALIB = True
+except ImportError:
+    print("⚠️ 未检测到 TA-Lib 库，将使用 Pandas 进行技术指标计算（性能可能略低）")
+    HAS_TALIB = False
 
 class TechnicalEngine:
-    """技术分析引擎 - 支持 YFinance 和 AkShare 双源数据获取与验证"""
+    """技术分析引擎 V5.0 - 全天候趋势增强版"""
 
-    def __init__(self, request_delay=2, max_retries=3):
-        # 默认延迟增加到 2 秒
+    def __init__(self, request_delay=1, max_retries=3):
         self.request_delay = request_delay
         self.max_retries = max_retries
+        self._hk_spot_cache = None 
+        self._hk_cache_time = 0
 
-    def set_request_delay(self, delay_seconds):
-        self.request_delay = delay_seconds
-        print(f"✅ 请求延迟已设置为 {delay_seconds} 秒")
-
-    def get_stock_data_dual_source(self, symbol, period="6mo"):
-        """双源数据获取与验证"""
-        # 清理输入字符，防止带有空格
-        symbol = symbol.strip()
-        
-        # 1. 获取 YFinance 数据
-        yf_data = self.get_stock_data_yfinance(symbol, period)
-        
-        # 2. 获取 AkShare 数据
-        ak_data = self.get_stock_data_akshare(symbol, period)
-        
-        # 3. 决策与融合
-        if ak_data is not None and not ak_data.empty:
-            if yf_data is not None and not yf_data.empty:
-                check_result = self._compare_data_sources(symbol, yf_data, ak_data)
-                return ak_data, check_result
-            else:
-                return ak_data, {"status": "Warning", "msg": "仅AkShare数据可用"}
-        elif yf_data is not None and not yf_data.empty:
-            return yf_data, {"status": "Warning", "msg": "仅YFinance数据可用 (AkShare失败)"}
-        else:
-            return None, {"status": "Error", "msg": "双源获取均失败"}
-
-    def _compare_data_sources(self, symbol, yf_data, ak_data):
+    def get_realtime_price(self, symbol):
+        """获取实时价格 (支持 A股/港股/美股)"""
         try:
-            yf_latest = yf_data['Close'].iloc[-1]
-            ak_latest = ak_data['Close'].iloc[-1]
-            diff_pct = abs(yf_latest - ak_latest) / ak_latest * 100
+            symbol = symbol.strip().upper()
             
-            info = {
-                "yf_price": round(yf_latest, 3),
-                "ak_price": round(ak_latest, 3),
-                "diff_pct": round(diff_pct, 2)
-            }
-            if diff_pct < 1.0:
-                info["status"] = "Success"
-                info["msg"] = f"数据一致 (偏差{diff_pct}%)"
-            else:
-                info["status"] = "Divergence"
-                info["msg"] = f"⚠️ 数据分歧! YF:{yf_latest} vs AK:{ak_latest}"
-            return info
-        except Exception as e:
-            return {"status": "Error", "msg": f"对比失败: {str(e)}"}
+            # 1. 港股处理 (00700.HK)
+            if symbol.endswith('.HK'):
+                return self._get_hk_realtime_price(symbol)
+            
+            # 2. A股处理 (600519.SH)
+            if symbol.endswith(('.SH', '.SZ', '.BJ')) or (symbol.isdigit() and len(symbol) == 6):
+                clean_symbol = symbol.split('.')[0]
+                for _ in range(2):
+                    try:
+                        df = ak.stock_zh_a_spot_em()
+                        row = df[df['代码'] == clean_symbol]
+                        if not row.empty:
+                            return float(row.iloc[0]['最新价']), float(row.iloc[0]['涨跌幅'])
+                    except: pass
+                    time.sleep(0.5)
+            
+            # 3. [V5新增] 美股/QDII处理 (NVDA, AAPL) - 使用 YFinance
+            if symbol.isalpha() or symbol.endswith('.US'):
+                clean_symbol = symbol.replace('.US', '')
+                try:
+                    ticker = yf.Ticker(clean_symbol)
+                    # fast_info 提供了比 history 更快的实时快照
+                    price = ticker.fast_info.last_price
+                    prev_close = ticker.fast_info.previous_close
+                    if price and prev_close:
+                        change_pct = ((price - prev_close) / prev_close) * 100
+                        return float(price), float(change_pct)
+                except: pass
 
-    def get_stock_data_yfinance(self, symbol, period="1y", retry_count=0):
-        """使用 yfinance 获取数据"""
+            return None, 0.0
+        except Exception as e:
+            # print(f"获取价格异常 {symbol}: {e}")
+            return None, 0.0
+
+    def _get_hk_realtime_price(self, symbol):
         try:
-            # 增加随机延迟，防止封IP
-            time.sleep(random.uniform(1.0, 2.0))
+            current_time = time.time()
+            if self._hk_spot_cache is None or (current_time - self._hk_cache_time > 15):
+                self._hk_spot_cache = ak.stock_hk_spot_em()
+                self._hk_cache_time = current_time
             
-            # --- 核心修复：HK股票代码强力适配 ---
-            search_symbol = symbol.strip()
-            # 如果是港股，使用正则去掉前导零，保留 .HK
-            if search_symbol.endswith(".HK"):
-                code_part = search_symbol.split('.')[0]
-                # 去掉开头的0，例如 00700 -> 700
-                new_code = code_part.lstrip('0')
-                search_symbol = f"{new_code}.HK"
-                # 特殊修正：如果去零后变成空（例如代码就是0.HK），则还原
-                if new_code == "": search_symbol = symbol 
-            
-            ticker = yf.Ticker(search_symbol)
-            data = ticker.history(period=period)
-            
-            if data is None or data.empty:
-                if retry_count < self.max_retries:
-                    print(f"    ⚠️ [YFinance] {search_symbol} 获取为空，重试 {retry_count+1}...")
-                    time.sleep(3) # 失败后多睡一会
-                    return self.get_stock_data_yfinance(symbol, period, retry_count + 1)
-                return None
+            raw_code = symbol.split('.')[0].zfill(5)
+            df = self._hk_spot_cache
+            row = df[df['代码'] == raw_code]
+            if not row.empty:
+                return float(row.iloc[0]['最新价']), float(row.iloc[0]['涨跌幅'])
+            return None, 0.0
+        except: return None, 0.0
 
-            return data
-        except Exception as e:
-            # 这里的 print 可能会被外层捕获，不打印堆栈以免刷屏
+    def analyze_holdings_health(self, holdings_list):
+        """
+        [V5 核心] 持仓健康度扫描 (多线程并发)
+        计算：影子净值、均线矩阵、压力位
+        """
+        if not holdings_list:
             return None
+
+        results = {
+            "holdings_xray": [],
+            "health_metrics": {
+                "total_weight_analyzed": 0.0,
+                "weighted_above_ma20": 0.0,
+                "weighted_above_ma60": 0.0,
+                "shadow_nav_change": 0.0,
+                "weighted_rsi_sum": 0.0
+            }
+        }
+
+        # 并发获取每一只重仓股的数据
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_stock = {
+                executor.submit(self._analyze_single_stock, stock): stock 
+                for stock in holdings_list
+            }
+
+            for future in as_completed(future_to_stock):
+                stock_info = future_to_stock[future]
+                try:
+                    data = future.result(timeout=15)
+                    if data:
+                        results["holdings_xray"].append(data)
+                        
+                        # 累加统计数据
+                        w = stock_info['weight']
+                        results["health_metrics"]["total_weight_analyzed"] += w
+                        results["health_metrics"]["shadow_nav_change"] += data['realtime']['change_pct'] * (w / 100)
+                        
+                        # 均线统计
+                        if data['ma_matrix']['price'] > data['ma_matrix']['ma20']:
+                            results["health_metrics"]["weighted_above_ma20"] += w
+                        if data['ma_matrix']['price'] > data['ma_matrix']['ma60']:
+                            results["health_metrics"]["weighted_above_ma60"] += w
+                            
+                        # RSI 统计
+                        results["health_metrics"]["weighted_rsi_sum"] += data['ma_matrix']['rsi'] * w
+
+                except Exception as e:
+                    print(f"   ⚠️ 分析股票 {stock_info['name']} ({stock_info['code']}) 失败: {e}")
+
+        # 归一化处理
+        total_w = results["health_metrics"]["total_weight_analyzed"]
+        if total_w > 0:
+            scale_factor = 100 / total_w if total_w < 95 else 1.0 
+            results["health_metrics"]["shadow_nav_change"] *= scale_factor
+            
+            results["health_metrics"]["ratio_above_ma20"] = round(results["health_metrics"]["weighted_above_ma20"] / total_w, 2)
+            results["health_metrics"]["ratio_above_ma60"] = round(results["health_metrics"]["weighted_above_ma60"] / total_w, 2)
+            results["health_metrics"]["weighted_rsi_14"] = round(results["health_metrics"]["weighted_rsi_sum"] / total_w, 2)
+        else:
+            results["health_metrics"]["weighted_rsi_14"] = 50.0
+        
+        # 按权重排序
+        results["holdings_xray"].sort(key=lambda x: x['weight'], reverse=True)
+        
+        return results
+
+    def _analyze_single_stock(self, stock_info):
+        """分析单只股票：获取实时价 + 计算历史均线"""
+        symbol = stock_info['code']
+        
+        # 1. 获取实时价格
+        current_price, change_pct = self.get_realtime_price(symbol)
+        if current_price is None:
+            return None
+
+        # 2. 获取历史 K 线 (用于计算 MA)
+        hist_data = self.get_stock_data_for_ma(symbol)
+        if hist_data is None or len(hist_data) < 60:
+            return {
+                 "code": symbol,
+                 "name": stock_info['name'],
+                 "weight": stock_info['weight'],
+                 "realtime": {"price": current_price, "change_pct": change_pct},
+                 "ma_matrix": {"price": current_price, "ma20": 0, "ma60": 0, "rsi": 50},
+                 "technical_signal": "No_History"
+            }
+            
+        # 3. 计算技术指标
+        ma_data = self._calculate_indicators(hist_data)
+        latest_ma = ma_data.iloc[-1]
+        
+        # 4. 组装数据
+        return {
+            "code": symbol,
+            "name": stock_info['name'],
+            "weight": stock_info['weight'],
+            "realtime": {
+                "price": current_price,
+                "change_pct": change_pct
+            },
+            "ma_matrix": {
+                "price": current_price,
+                "ma5": float(latest_ma.get('MA5', 0)),
+                "ma10": float(latest_ma.get('MA10', 0)),
+                "ma20": float(latest_ma.get('MA20', 0)),
+                "ma60": float(latest_ma.get('MA60', 0)),
+                "rsi": float(latest_ma.get('RSI', 50))
+            },
+            "technical_signal": self._generate_signal(current_price, latest_ma)
+        }
+
+    def get_stock_data_for_ma(self, symbol):
+        """获取用于计算均线的历史数据"""
+        # 优先使用 AkShare (A股/港股)
+        if symbol.endswith(('.SH', '.SZ', '.BJ', '.HK')):
+            return self.get_stock_data_akshare(symbol, period='6mo')
+        # 美股或其他使用 YFinance
+        return self.get_stock_data_yfinance(symbol, period='6mo')
 
     def get_stock_data_akshare(self, symbol_full, period="6mo"):
         try:
-            # 增加随机延迟
-            time.sleep(random.uniform(0.5, 1.5))
-            
-            symbol_full = symbol_full.strip()
             clean_symbol = symbol_full.split('.')[0]
-            market = symbol_full.split('.')[-1] if '.' in symbol_full else ""
             end_date = datetime.now().strftime("%Y%m%d")
-            start_date = self._get_start_date_by_period(period)
+            start_date = (datetime.now() - timedelta(days=200)).strftime("%Y%m%d")
             
             df = None
+            if symbol_full.endswith('.HK'):
+                df = ak.stock_hk_hist(symbol=clean_symbol.zfill(5), start_date=start_date, end_date=end_date, adjust="qfq")
+            else:
+                df = ak.stock_zh_a_hist(symbol=clean_symbol, start_date=start_date, end_date=end_date, adjust="qfq")
             
-            # 1. 尝试 ETF
-            try:
-                df = ak.fund_etf_hist_em(
-                    symbol=clean_symbol, 
-                    period="daily", 
-                    start_date=start_date, 
-                    end_date=end_date,
-                    adjust="qfq"
-                )
-            except: pass
-                
-            # 2. 尝试 A股
-            if df is None or df.empty:
-                try:
-                    df = ak.stock_zh_a_hist(
-                        symbol=clean_symbol, 
-                        period="daily", 
-                        start_date=start_date, 
-                        end_date=end_date,
-                        adjust="qfq"
-                    )
-                except: pass
-            
-            # 3. 尝试 港股
-            if (df is None or df.empty) and market == 'HK':
-                try:
-                    # AkShare 港股通常需要 5 位
-                    hk_symbol = clean_symbol.zfill(5)
-                    df = ak.stock_hk_hist(
-                        symbol=hk_symbol,
-                        period="daily",
-                        start_date=start_date,
-                        end_date=end_date,
-                        adjust="qfq"
-                    )
-                except: pass
-
             if df is None or df.empty: return None
-                
-            rename_map = {
-                "日期": "Date", "收盘": "Close", "开盘": "Open", 
-                "最高": "High", "最低": "Low", "成交量": "Volume",
-                "收盘价": "Close", "开盘价": "Open", "最高价": "High", "最低价": "Low"
-            }
+            
+            rename_map = {"日期": "Date", "收盘": "Close", "收盘价": "Close"}
             df = df.rename(columns=rename_map)
             df["Date"] = pd.to_datetime(df["Date"])
             df.set_index("Date", inplace=True)
-            for col in ["Close", "Open", "High", "Low", "Volume"]:
-                if col in df.columns: df[col] = pd.to_numeric(df[col])
-            
+            df["Close"] = pd.to_numeric(df["Close"])
             return df
         except:
             return None
-
-    def _get_start_date_by_period(self, period):
-        now = datetime.now()
-        days_map = {'1mo': 30, '3mo': 90, '6mo': 180, '1y': 365}
-        delta = timedelta(days=days_map.get(period, 180))
-        return (now - delta).strftime("%Y%m%d")
-
-    def get_multiple_periods_data(self, symbol):
-        periods = {'1mo': '1个月', '3mo': '3个月', '6mo': '6个月', '1y': '1年'}
-        all_data = {}
-        print(f"🔄 正在双源获取 {symbol} 多周期数据...")
-        
-        for period_code, period_name in periods.items():
-            data, source_info = self.get_stock_data_dual_source(symbol, period_code)
-            if data is not None and not data.empty:
-                technical_data = self.calculate_technical_indicators(data)
-                if technical_data is not None:
-                    all_data[period_code] = {
-                        'raw': data,
-                        'technical': technical_data,
-                        'name': period_name,
-                        'source_info': source_info
-                    }
-        
-        # 只要能获取到一个周期就算成功
-        if all_data:
-            print(f"✅ 成功准备好 {len(all_data)} 个周期的数据")
-            return all_data
-        else:
-            print("❌ 无法获取任何周期的数据")
-            return None
-
-    def calculate_technical_indicators(self, data):
-        if data is None or data.empty: return None
-        df = data.copy()
+            
+    def get_stock_data_yfinance(self, symbol, period="6mo"):
         try:
-            df['SMA_5'] = talib.SMA(df['Close'], timeperiod=5)
-            df['SMA_10'] = talib.SMA(df['Close'], timeperiod=10)
-            df['SMA_20'] = talib.SMA(df['Close'], timeperiod=20)
-            df['SMA_60'] = talib.SMA(df['Close'], timeperiod=60)
-            df['SMA_200'] = talib.SMA(df['Close'], timeperiod=200)
-            df['RSI'] = talib.RSI(df['Close'], timeperiod=14)
-            df['MACD'], df['MACD_Signal'], df['MACD_Hist'] = talib.MACD(df['Close'])
-            return df
+            ticker = yf.Ticker(symbol)
+            return ticker.history(period=period)
         except: return None
 
-    def analyze_ma_trend(self, latest_data):
-        trends = []
-        # 简化的趋势判断
-        if all(k in latest_data for k in ['SMA_5', 'SMA_10', 'SMA_20']) and not pd.isna(latest_data['SMA_20']):
-            if latest_data['SMA_5'] > latest_data['SMA_10'] > latest_data['SMA_20']:
-                trends.append("✅ **多头排列** (5>10>20)")
-            elif latest_data['SMA_5'] < latest_data['SMA_10'] < latest_data['SMA_20']:
-                trends.append("❌ **空头排列** (5<10<20)")
-        
-        key_mas = [('SMA_20', '20日'), ('SMA_60', '60日'), ('SMA_200', '200日')]
-        for ma_key, ma_name in key_mas:
-            if ma_key in latest_data and not pd.isna(latest_data[ma_key]):
-                if latest_data['Close'] > latest_data[ma_key]:
-                    trends.append(f"📈 **站稳{ma_name}线**")
-                else:
-                    trends.append(f"📉 **跌破{ma_name}线**")
-        return "\n".join(trends) if trends else "数据不足"
+    def _calculate_indicators(self, df):
+        """计算 MA 和 RSI"""
+        if HAS_TALIB:
+            df['MA5'] = talib.SMA(df['Close'], timeperiod=5)
+            df['MA10'] = talib.SMA(df['Close'], timeperiod=10)
+            df['MA20'] = talib.SMA(df['Close'], timeperiod=20)
+            df['MA60'] = talib.SMA(df['Close'], timeperiod=60)
+            df['RSI'] = talib.RSI(df['Close'], timeperiod=14)
+        else:
+            # Pandas Fallback
+            df['MA5'] = df['Close'].rolling(window=5).mean()
+            df['MA10'] = df['Close'].rolling(window=10).mean()
+            df['MA20'] = df['Close'].rolling(window=20).mean()
+            df['MA60'] = df['Close'].rolling(window=60).mean()
+            # 简单的 RSI 近似算法
+            delta = df['Close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            df['RSI'] = 100 - (100 / (1 + rs))
+        return df
 
-    # 其他辅助方法保持空或简单实现
-    def validate_stock_symbol(self, symbol): return True
-    def display_raw_data(self, data, symbol): pass
-    def get_ma_analysis_for_period(self, latest_data): return ""
-    def plot_technical_analysis(self, data, symbol, period_name): return True
+    def _generate_signal(self, price, ma_data):
+        """生成简单的单股技术信号"""
+        ma60 = ma_data.get('MA60', 0)
+        signals = []
+        
+        if ma60 > 0:
+            diff = (price - ma60) / ma60 * 100
+            if -2 < diff < 0:
+                signals.append("Near_Pressure_MA60")
+            elif 0 < diff < 2:
+                signals.append("Near_Support_MA60")
+                
+        rsi = ma_data.get('RSI', 50)
+        if rsi > 70: signals.append("Overbought")
+        if rsi < 30: signals.append("Oversold")
+        
+        return ", ".join(signals) if signals else "Neutral"

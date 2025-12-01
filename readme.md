@@ -1,45 +1,54 @@
-# 📊 DeepSeek 金融分析系统 (V5 增强版)
+# 📘 DeepSeek Finance Project V2 (Current Architecture Snapshot)
 
-> **全维度智能投顾引擎**：集成宏观、技术、舆情、资金流与 RAG 记忆进化的 Python 量化分析系统。
+**版本状态**: V2.0 (Internal Code V5.0)
+**核心定位**: 基于 LLM + RAG 的全天候场外基金智能投顾系统
+**最后更新**: 2025
 
-## 🚀 项目简介
+---
 
-本项目是一个基于 DeepSeek 大模型（LLM）的自动化金融分析系统。V5 版本在原版基础上进行了深度重构，引入了**双轨数据源验证**、**RAG 检索增强生成**以及**AI 策略自我进化**机制，旨在提供更准确、更具深度的市场洞察。
+## 1. 项目概述 (Project Overview)
 
-## ✨ 核心特性
+本项目是一个高度自动化的个人量化投顾系统，旨在解决场外基金“净值滞后”和“决策缺乏依据”的两大痛点。系统集成了 **DeepSeek 大模型** 作为决策大脑，辅以 **AkShare/YFinance 双轨数据源**，并拥有 **RAG (检索增强生成)** 记忆能力，能够进行宏观分析、持仓穿透、技术面诊断及舆情监控。
 
-### 1. 🛡️ 双轨数据引擎 (Dual-Source)
-- **多源验证**：同时接入 **YFinance** (全球行情) 和 **AkShare** (A股/港股深度数据)。
-- **自动兜底**：当某一接口失效或被封锁时，自动切换至备用源。
-- **数据裁判**：自动比对双源数据偏差，确保 K 线和技术指标的准确性。
+### 核心解决问题
+1.  **盲盒交易**: 通过穿透基金持仓计算“影子净值 (Shadow NAV)”，在 14:30 预测当日涨跌。
+2.  **数据孤岛**: 综合宏观（美债/汇率）、中观（行业热度）、微观（K线形态）多维数据。
+3.  **记忆缺失**: 通过向量数据库 (ChromaDB) 存储研报和历史经验，避免 AI "狗熊掰棒子"。
+4.  **策略僵化**: 具备“策略进化引擎”，能记录预测结果并进行反思迭代。
 
-### 2. 🧠 RAG 金融大脑 (Financial Brain)
-- **研报知识库**：支持导入 PDF 研报或自动抓取顶级投行（摩根、高盛等）观点，存入本地向量数据库 (ChromaDB)。
-- **上下文感知**：AI 在分析时会自动检索相关的历史研报和专家观点，拒绝“幻觉”。
+---
 
-### 3. 🧬 策略进化引擎 (Evolution)
-- **闭环学习**：自动记录每日预测 -> 5天后自动回测验证 -> 错误时触发反思模式。
-- **经验沉淀**：将反思总结出的“投资法则”存入数据库，下次分析时自动调用，避免重蹈覆辙。
+## 2. 系统架构 (System Architecture)
 
-### 4. 🔮 全维度扫描 (V5 Pipeline)
-- **宏观 (Macro)**：监控美债收益率、美元指数、中美利差、跨境资金流向。
-- **暗流 (Dark Flow)**：探测获利盘筹码分布、做空比例等隐蔽信号。
-- **舆情 (Sentiment)**：抓取新闻联播政策信号、财联社快讯及散户热度逆向指标。
-- **技术 (Technical)**：多周期 K 线形态识别、均线系统、RSI/MACD 背离分析。
+系统采用模块化设计，以 `finance_analyzer.py` 为中枢，向下调用各专业引擎，向上对接 DeepSeek API。
 
-## 📂 项目结构
+```mermaid
+graph TD
+    User[用户] --> Main[main.py (CLI入口)]
+    Main --> Analyzer[finance_analyzer.py (分析中枢)]
+    
+    subgraph "Data Layer (数据感知)"
+        DataMgr[fund_data_manager.py] --> AkShare[AkShare API]
+        TechEng[technical_engine.py] --> YFinance[YFinance API]
+        Macro[macro_analyzer.py] --> FRED[FRED/Bond Data]
+        Senti[sentiment_engine.py] --> EastMoney[东方财富/财联社]
+    end
+    
+    subgraph "Memory Layer (记忆存储)"
+        RAG[financial_brain.py] --> ChromaDB[(Chroma Vector DB)]
+        Evo[strategy_evolution.py] --> SQLite[(Financial Memory DB)]
+        Port[portfolio_manager.py] --> JSON[Portfolio Config]
+    end
+    
+    subgraph "Brain Layer (决策大脑)"
+        Analyzer --> Prompt[prompt_builder.py]
+        Prompt --> DeepSeek[DeepSeek API]
+        DeepSeek --> Decision[投资建议]
+    end
 
-```text
-deepseek_finance_project_V2/
-├── main.py                 # 主程序入口
-├── finance_analyzer.py     # 业务控制中心 (V5 Pipeline)
-├── technical_engine.py     # [核心] 双轨行情获取与指标计算
-├── financial_brain.py      # [核心] RAG 向量数据库管理
-├── strategy_evolution.py   # [核心] 预测记录与进化反思
-├── sentiment_engine.py     # 舆情与新闻爬虫
-├── macro_analyzer.py       # 宏观经济数据分析
-├── dark_flow_detector.py   # 筹码与做空数据分析
-├── etf_holdings.py         # ETF 持仓管理 (支持动态更新)
-├── prompt_builder.py       # 提示词工程构建器
-├── brain_memory/           # ChromaDB 向量数据库存储目录
-└── financial_memory.db     # SQLite 策略进化数据库
+    Analyzer --> DataMgr
+    Analyzer --> TechEng
+    Analyzer --> Macro
+    Analyzer --> Senti
+    Analyzer --> RAG
+    Analyzer --> Evo

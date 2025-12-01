@@ -1,3 +1,5 @@
+# deepseek_finance_project_V2/financial_brain.py
+
 import chromadb
 from chromadb.utils import embedding_functions
 import pdfplumber
@@ -14,6 +16,7 @@ class FinancialBrainRAG:
         """
         金融大脑RAG系统 - 研报知识库 + 历史经验记忆
         """
+        self.persist_directory = persist_directory
         self.client = chromadb.PersistentClient(path=persist_directory)
         
         # 使用更适合中文的嵌入模型
@@ -21,7 +24,10 @@ class FinancialBrainRAG:
             model_name="paraphrase-multilingual-MiniLM-L12-v2"  # 多语言模型，中文效果更好
         )
 
-        # 创建三个记忆区
+        self._init_collections()
+
+    def _init_collections(self):
+        """初始化所有集合"""
         self.knowledge_base = self.client.get_or_create_collection(
             name="research_reports",
             embedding_function=self.emb_fn,
@@ -39,6 +45,24 @@ class FinancialBrainRAG:
             embedding_function=self.emb_fn,
             metadata={"description": "财经新闻和政策动态"}
         )
+
+    def reset_all_memories(self):
+        """[新增] 重置所有记忆库"""
+        try:
+            # 删除现有集合
+            for name in ["research_reports", "market_history", "financial_news"]:
+                try:
+                    self.client.delete_collection(name)
+                except:
+                    pass
+            
+            # 重新创建
+            self._init_collections()
+            print("✅ RAG 记忆库已全部重置")
+            return True
+        except Exception as e:
+            print(f"❌ RAG 重置失败: {e}")
+            return False
 
     # ==========================================
     # 📚 研报知识库管理

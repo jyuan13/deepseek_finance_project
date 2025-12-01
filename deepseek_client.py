@@ -1,3 +1,5 @@
+# deepseek_finance_project_V2/deepseek_client.py
+
 import os
 import json
 from openai import OpenAI
@@ -8,11 +10,6 @@ class DeepSeekClient:
     def __init__(self, api_key=None, base_url="https://api.deepseek.com", conversation_dir="conversations"):
         """
         初始化DeepSeek客户端
-        
-        Args:
-            api_key: DeepSeek API密钥
-            base_url: API基础URL
-            conversation_dir: 对话历史保存目录路径（可选）
         """
         self.api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
         if not self.api_key:
@@ -115,6 +112,28 @@ class DeepSeekClient:
         except Exception as e:
             print(f"⚠ 保存对话历史失败: {e}")
             return False
+            
+    def clear_all_conversations(self):
+        """[新增] 清空所有对话文件"""
+        if not self.conversation_dir or not os.path.exists(self.conversation_dir):
+            return True
+        
+        try:
+            files = glob.glob(os.path.join(self.conversation_dir, "Chat_*.json"))
+            if not files:
+                print("⚠️  没有可清除的对话记录")
+                return True
+                
+            for f in files:
+                os.remove(f)
+            
+            self.conversation_history = []
+            self.current_conversation_file = None
+            print(f"✅ 已清除 {len(files)} 个历史对话文件")
+            return True
+        except Exception as e:
+            print(f"❌ 对话文件清除失败: {e}")
+            return False
     
     def list_conversations(self):
         """列出所有可用的对话文件"""
@@ -163,18 +182,7 @@ class DeepSeekClient:
         print("✓ 当前对话历史已清空")
     
     def chat(self, message, model_type="chat", system_prompt="You are a helpful assistant", use_history=True):
-        """
-        与DeepSeek进行对话
-        
-        Args:
-            message: 用户消息
-            model_type: 模型类型
-            system_prompt: 系统角色设定
-            use_history: 是否使用对话历史
-            
-        Returns:
-            dict: 包含回复内容、token使用情况和费用信息的字典
-        """
+        """与DeepSeek进行对话"""
         if model_type not in self.models:
             raise ValueError(f"不支持的模型类型: {model_type}，可选: {list(self.models.keys())}")
         
@@ -249,9 +257,7 @@ class DeepSeekClient:
         }
     
     def interactive_chat(self, model_type="chat", system_prompt="You are a helpful assistant that responds in Chinese"):
-        """
-        交互式聊天模式（支持连续对话）
-        """
+        """交互式聊天模式（支持连续对话）"""
         # 确保有当前对话文件
         if not self.current_conversation_file and self.conversation_dir:
             self.start_new_conversation()
@@ -342,18 +348,3 @@ class DeepSeekClient:
                     print("无效的编号")
         except ValueError:
             print("请输入有效数字")
-
-
-# 使用示例
-if __name__ == "__main__":
-    # 初始化客户端，指定对话目录
-    client = DeepSeekClient(
-        api_key="sk-dbc83540209e4a0ebadad4e283281d9a",
-        conversation_dir="conversations"  # 对话历史将保存在conversations文件夹中
-    )
-    
-    # 启动交互式聊天
-    client.interactive_chat(
-        model_type="chat",
-        system_prompt="You are a helpful assistant that responds in Chinese"
-    )

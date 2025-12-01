@@ -1,172 +1,86 @@
-from typing import Dict, Any, List
-from sentiment_engine import SentimentEngine
-from financial_brain import FinancialBrainRAG
+# deepseek_finance_project_V2/prompt_builder.py
+
+import json
 
 class PromptBuilder:
-    """
-    提示词构建器 - 集成RAG记忆
-    """
-    
-    def __init__(self, sentiment_engine: SentimentEngine = None, rag_engine: FinancialBrainRAG = None):
+    def __init__(self, sentiment_engine, rag_engine):
         self.sentiment_engine = sentiment_engine
         self.rag_engine = rag_engine
-    
-    def build_comprehensive_prompt(self, analysis_data: Dict[str, Any], 
-                                 etf_list: List[Dict], 
-                                 historical_lessons: List[str] = None) -> str:
-        """构建综合分析提示词"""
+
+    def build_fund_analysis_prompt(self, payload):
+        """
+        [V5 Pro] 构建全维度基金分析提示词
+        集成：影子净值 + 持仓透视 + 宏观环境 + 市场情绪
+        """
+        fund = payload.get('fund_profile', {})
+        shadow = payload.get('shadow_nav_estimation', {})
+        health = payload.get('portfolio_health_metrics', {})
+        holdings = payload.get('top_holdings_xray', [])
+        user_ctx = payload.get('user_context', {})
+        macro = payload.get('macro_environment', {})
+        sentiment = payload.get('market_sentiment', {})
         
-        market_context = analysis_data['market_context']
-        etf_analysis = analysis_data['etf_analysis']
-        rag_context = analysis_data.get('rag_context', {})
-        
-        # 生成各个部分
-        sentiment_segment = ""
-        if self.sentiment_engine:
-            sentiment_segment = self.sentiment_engine.generate_nlp_prompt_segment(etf_list)
-        
-        rag_segment = self._build_rag_segment(rag_context, etf_list)
-        wisdom_segment = self._format_historical_wisdom(historical_lessons)
-        
+        # 1. 格式化重仓股数据 (Markdown 表格)
+        holdings_table = "| 股票 | 权重 | 现价 | 涨跌 | MA20状态 | MA60状态 | 信号 |\n|---|---|---|---|---|---|---|\n"
+        for s in holdings:
+            ma_metrics = s.get('ma_matrix', {})
+            price = s['realtime']['price']
+            ma20_status = "✅之上" if price > ma_metrics.get('ma20', 0) else "❌之下"
+            ma60_status = "✅之上" if price > ma_metrics.get('ma60', 0) else "❌之下"
+            
+            holdings_table += f"| {s['name']} | {s['weight']}% | {price} | {s['realtime']['change_pct']}% | {ma20_status} | {ma60_status} | {s.get('technical_signal','')} |\n"
+
         prompt = f"""
-# 📊 DeepSeek金融分析系统 V5.0 - 智能投顾报告
-分析时间: {analysis_data['timestamp']}
+# 角色设定
+你是一位精通 **趋势交易** 和 **T+1 基金策略** 的资深基金经理。
+你正在分析基金：**{fund.get('target_name')} ({fund.get('target_code')})**。
 
-{wisdom_segment}
+# 🌍 宏观气象站 (Macro Context)
+- **核心指数**: 纳指({macro.get('Nasdaq','N/A')}), A50({macro.get('China_A50','N/A')})
+- **流动性**: 美债10年收益率 {macro.get('US_10Y','N/A')}%
+- **市场情绪**: {sentiment.get('summary', '中性')}
 
-{rag_segment}
+# 📊 基金核心数据 (Fund Payload)
 
-## 🌍 宏观环境分析
+## 1. 影子净值 (今日实时推演)
+- **预估涨跌**: {shadow.get('estimated_change_pct'):+.2f}%
+- **推演依据**: {shadow.get('primary_driver')}
 
-### 流动性状况
-- 中美利差: {market_context['macro_liquidity'].get('spread_cn_us', 'N/A')}
-- 美元指数: {market_context['macro_liquidity'].get('dxy', 'N/A')}
-- 美国10年期国债: {market_context['macro_liquidity'].get('us_10y', 'N/A')}
-- 中国10年期国债: {market_context['macro_liquidity'].get('cn_10y', 'N/A')}
+## 2. 持仓健康度 (均线矩阵)
+- **20日线(生命线)站上比例**: {health.get('ratio_above_ma20', 0)*100}% (权重占比)
+- **60日线(决策线)站上比例**: {health.get('ratio_above_ma60', 0)*100}% (权重占比)
+- **整体 RSI**: {health.get('weighted_rsi_14', 50):.1f}
 
-### 资金流向
-- 北向资金: {market_context['cross_border_flow'].get('north_money', 'N/A')}
-- 南向资金: {market_context['cross_border_flow'].get('south_money', 'N/A')}
+## 3. 重仓股深度透视 (X-Ray)
+{holdings_table}
 
-### 指数趋势
-{self._format_indices_trend(market_context['major_indices_trend'])}
+## 4. 用户账户状态
+- **持有成本**: {user_ctx.get('avg_cost')}
+- **当前浮动盈亏**: {user_ctx.get('current_pnl_pct'):.2f}%
 
-## 🎯 ETF深度分析 (含暗流与技术面)
+# 分析指令
+请基于 **"宏观环境 + 持仓结构"** 进行深度推理（Chain of Thought）：
 
-{self._format_etf_analysis(etf_analysis)}
+1. **环境确认**：当前宏观环境（A50/美债）是助涨还是拖累？
+2. **趋势研判**：
+   - 短期趋势：80%以上的重仓股是否站稳 MA20？
+   - 中期趋势：权重股是否触碰到 MA60 压力位？
+3. **归因分析**：
+   - 今天的上涨是龙头股带动的真突破，还是跟风股的死猫跳？
+4. **操作建议 (T+1 核心)**：
+   - 用户当前处于 **{"盈利" if user_ctx.get('current_pnl_pct',0) > 0 else "亏损"}** 状态。
+   - **判定法则**：
+     - 若 (宏观向好 AND 持仓突破) -> **持有过夜 (博取更高收益)**。
+     - 若 (宏观承压 OR 触及MA60压力) -> **今日确权离场 (T+1止盈/止损)**。
 
-{sentiment_segment}
-
-## 📋 分析要求
-
-请基于以上多维数据(宏观、暗流、技术、舆情)，提供专业的投资分析：
-
-### 1. 宏观趋势判断
-- 当前市场整体处于什么周期？（Risk-on/Risk-off）
-- 流动性环境对各类资产的影响
-
-### 2. ETF投资建议（结合技术面与暗流信号）
-- 对各ETF的买入/持有/卖出建议
-- **特别注意**：暗流信号(筹码/做空)与技术面(均线/RSI)是否共振
-- 仓位管理和分批建仓建议
-
-### 3. 预测输出格式
-**请为每个ETF单独输出预测**，格式如下：
-
-【预测开始】
-{{
-  "513120.SH": {{"outlook": "Bullish", "confidence": 0.75, "timeframe": 5, "reasoning": "简要分析理由"}},
-  "512890.SH": {{"outlook": "Neutral", "confidence": 0.60, "timeframe": 5, "reasoning": "简要分析理由"}},
-  "159995.SZ": {{"outlook": "Bearish", "confidence": 0.80, "timeframe": 5, "reasoning": "简要分析理由"}}
-}}
-【预测结束】
-
-### 4. 风险提示
-- 需要重点关注的风险因素
-- 技术面破位或过热风险
-
-请结合专家观点、历史经验和实时数据，提供全面客观的分析。
+请输出 JSON 格式结论，包含字段：
+- `trend_assessment`: (简短趋势描述)
+- `action_signal`: (BUY / HOLD / SELL / WAIT)
+- `reasoning`: (详细的逻辑推演，必须引用上述数据)
+- `risk_warning`: (具体的风险点)
 """
         return prompt
     
-    def _build_rag_segment(self, rag_context: Dict[str, Any], etf_list: List[Dict]) -> str:
-        """构建RAG记忆片段"""
-        if not rag_context or not self.rag_engine:
-            return ""
-        
-        segment = """
-## 🧠 智能记忆分析 (RAG系统)
-
-"""
-        for etf in etf_list:
-            symbol = etf['symbol']
-            if symbol in rag_context:
-                context = rag_context[symbol]
-                
-                segment += f"### {etf['name']} ({symbol}) 相关记忆\n"
-                
-                # 专家观点
-                if context.get('expert_views'):
-                    segment += "**📚 专家观点:**\n"
-                    for i, view in enumerate(context['expert_views'][:2]):
-                        segment += f"{i+1}. {view[:100]}...\n"
-                
-                # 历史模式
-                if context.get('historical_patterns'):
-                    segment += "\n**🕰️ 历史相似模式:**\n"
-                    for pattern in context['historical_patterns']:
-                        segment += f"- {pattern[:80]}...\n"
-                
-                # 行业新闻
-                if context.get('sector_news'):
-                    segment += "\n**📰 相关资讯:**\n"
-                    for news in context['sector_news'][:2]:
-                        segment += f"- {news}\n"
-                
-                segment += "\n"
-        
-        return segment
-    
-    def _format_historical_wisdom(self, lessons: List[str]) -> str:
-        """格式化历史经验"""
-        if not lessons:
-            return ""
-        
-        formatted = """
-## ⚠️ 历史经验教训 (基于过往错误总结)
-
-"""
-        for i, lesson in enumerate(lessons, 1):
-            formatted += f"{i}. {lesson}\n"
-        
-        formatted += "\n**请特别注意这些基于真实错误总结的经验法则**\n"
-        return formatted
-    
-    @staticmethod
-    def _format_indices_trend(trends: Dict[str, str]) -> str:
-        lines = []
-        for name, trend in trends.items():
-            lines.append(f"- {name}: {trend}")
-        return "\n".join(lines) if lines else "暂无趋势数据"
-    
-    @staticmethod
-    def _format_etf_analysis(etf_analysis: Dict[str, Any]) -> str:
-        lines = []
-        for symbol, data in etf_analysis.items():
-            lines.append(f"### {data['name']} ({symbol})")
-            
-            # 基础估值
-            lines.append(f"- 估值(PE): {data.get('valuation', {}).get('pe_ttm', 'N/A')}")
-            
-            # 技术面深度分析 (新功能)
-            tech_review = data.get('technical_review')
-            if tech_review:
-                lines.append(f"\n💻 技术面深度分析:\n{tech_review}")
-            
-            # 暗流数据
-            dark_flow = data.get('dark_flow', {})
-            if dark_flow.get('signal') != 'Neutral':
-                lines.append(f"- 🎯 暗流信号: {dark_flow.get('signal')} - {dark_flow.get('desc', '')}")
-            
-            lines.append("")
-        return "\n".join(lines)
+    # 为了兼容性保留旧接口（可选）
+    def build_comprehensive_prompt(self, *args, **kwargs):
+        return "Legacy Prompt V4.6"
