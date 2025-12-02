@@ -1,4 +1,4 @@
-# deepseek_finance_project_V2/deepseek_client.py
+# deepseek_finance_project_V3/deepseek_client.py
 
 import os
 import json
@@ -7,18 +7,20 @@ from datetime import datetime
 import glob
 
 class DeepSeekClient:
-    def __init__(self, api_key=None, base_url=None, provider="qwen", conversation_dir="conversations"):
+    def __init__(self, api_key=None, base_url=None, provider="qwen", conversation_dir="conversations", max_history_rounds=10):
         """
         初始化多模态客户端 (支持 DeepSeek 和 Qwen)
         :param api_key: API Key
-        :param base_url: 自定义 Base URL (可选)
-        :param provider: 模型供应商 ("deepseek" 或 "qwen")
-        :param conversation_dir: 对话历史保存目录
+        :param base_url: 自定义 Base URL
+        :param provider: "deepseek" 或 "qwen"
+        :param conversation_dir: 对话保存目录
+        :param max_history_rounds: [V3.9] 仅保留最近 N 轮对话，防止 Token 爆炸
         """
         self.provider = provider.lower()
         self.conversation_dir = conversation_dir
         self.current_conversation_file = None
         self.conversation_history = []
+        self.max_history_rounds = max_history_rounds
         
         # --- 供应商配置初始化 ---
         if self.provider == "qwen":
@@ -189,16 +191,27 @@ class DeepSeekClient:
         return conversation_files
     
     def add_to_history(self, role, content):
-        """添加消息到历史记录"""
+        """
+        [V3.9] 添加消息到历史记录，并执行滑动窗口裁剪
+        """
         self.conversation_history.append({"role": role, "content": content})
+        
+        # 记忆防爆：只保留最近 N 轮 (2*N 条消息)
+        if len(self.conversation_history) > self.max_history_rounds * 2:
+            self.conversation_history = self.conversation_history[-(self.max_history_rounds * 2):]
+            
         self.save_conversation()
     
     def clear_history(self):
-        """清空当前对话历史"""
+        """
+        [V3.9] 清空当前内存中的对话历史 (用于任务隔离)
+        """
         self.conversation_history = []
         if self.current_conversation_file:
-            self.save_conversation()
-        print("✓ 当前对话历史已清空")
+            # 选择性保存，或者不保存空状态，视需求而定
+            # 这里我们只重置内存，不覆盖文件，防止误删长期记忆
+            pass
+        # print("✓ 当前对话上下文已重置")
     
     def chat(self, message, model_type="chat", system_prompt="You are a helpful assistant", use_history=True):
         """与模型进行对话 (自动适配 Qwen/DeepSeek)"""
@@ -211,8 +224,8 @@ class DeepSeekClient:
         # 构建消息列表
         messages = [{"role": "system", "content": system_prompt}]
         
-        # 添加历史记录（如果启用）
-        if use_history:
+        # [V3.9] 仅当启用且有历史时添加
+        if use_history and self.conversation_history:
             messages.extend(self.conversation_history)
         
         # 添加当前用户消息

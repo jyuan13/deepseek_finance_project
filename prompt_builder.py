@@ -1,86 +1,85 @@
-# deepseek_finance_project_V2/prompt_builder.py
+# deepseek_finance_project_V3/prompt_builder.py
 
 import json
 
 class PromptBuilder:
-    def __init__(self, sentiment_engine, rag_engine):
-        self.sentiment_engine = sentiment_engine
-        self.rag_engine = rag_engine
+    """
+    [V3.3] 提示词工厂 - 定义投资委员会的角色面具
+    """
+    def __init__(self, sentiment_engine=None, rag_engine=None):
+        self.sentiment = sentiment_engine
+        self.rag = rag_engine
 
-    def build_fund_analysis_prompt(self, payload):
-        """
-        [V5 Pro] 构建全维度基金分析提示词
-        集成：影子净值 + 持仓透视 + 宏观环境 + 市场情绪
-        """
-        fund = payload.get('fund_profile', {})
-        shadow = payload.get('shadow_nav_estimation', {})
-        health = payload.get('portfolio_health_metrics', {})
-        holdings = payload.get('top_holdings_xray', [])
-        user_ctx = payload.get('user_context', {})
-        macro = payload.get('macro_environment', {})
-        sentiment = payload.get('market_sentiment', {})
-        
-        # 1. 格式化重仓股数据 (Markdown 表格)
-        holdings_table = "| 股票 | 权重 | 现价 | 涨跌 | MA20状态 | MA60状态 | 信号 |\n|---|---|---|---|---|---|---|\n"
-        for s in holdings:
-            ma_metrics = s.get('ma_matrix', {})
-            price = s['realtime']['price']
-            ma20_status = "✅之上" if price > ma_metrics.get('ma20', 0) else "❌之下"
-            ma60_status = "✅之上" if price > ma_metrics.get('ma60', 0) else "❌之下"
-            
-            holdings_table += f"| {s['name']} | {s['weight']}% | {price} | {s['realtime']['change_pct']}% | {ma20_status} | {ma60_status} | {s.get('technical_signal','')} |\n"
+    def build_macro_agent_prompt(self, macro_data, kronos_signal):
+        """角色1: 宏观量化分析师"""
+        return f"""
+# 角色: 华尔街资深宏观策略师
+# 任务: 分析全球市场数据，生成一份简短的【宏观天气简报】。
 
-        prompt = f"""
-# 角色设定
-你是一位精通 **趋势交易** 和 **T+1 基金策略** 的资深基金经理。
-你正在分析基金：**{fund.get('target_name')} ({fund.get('target_code')})**。
+## 核心数据
+1. **量化预测 (Kronos Model)**: {kronos_signal}
+   *(注: 这是基于K线大模型生成的纳斯达克趋势预测)*
+2. **市场数据**: 
+{macro_data}
 
-# 🌍 宏观气象站 (Macro Context)
-- **核心指数**: 纳指({macro.get('Nasdaq','N/A')}), A50({macro.get('China_A50','N/A')})
-- **流动性**: 美债10年收益率 {macro.get('US_10Y','N/A')}%
-- **市场情绪**: {sentiment.get('summary', '中性')}
+## 分析要求
+1. **定性判断**: 结合 Kronos 信号和期货涨跌，判断今日市场基调 (牛/熊/震荡)。
+2. **风险提示**: 黄金或美债是否有异常波动？
+3. **输出结论**: 用一句话概括今日策略倾向 (例如: "顺势做多" 或 "避险观望")。
 
-# 📊 基金核心数据 (Fund Payload)
-
-## 1. 影子净值 (今日实时推演)
-- **预估涨跌**: {shadow.get('estimated_change_pct'):+.2f}%
-- **推演依据**: {shadow.get('primary_driver')}
-
-## 2. 持仓健康度 (均线矩阵)
-- **20日线(生命线)站上比例**: {health.get('ratio_above_ma20', 0)*100}% (权重占比)
-- **60日线(决策线)站上比例**: {health.get('ratio_above_ma60', 0)*100}% (权重占比)
-- **整体 RSI**: {health.get('weighted_rsi_14', 50):.1f}
-
-## 3. 重仓股深度透视 (X-Ray)
-{holdings_table}
-
-## 4. 用户账户状态
-- **持有成本**: {user_ctx.get('avg_cost')}
-- **当前浮动盈亏**: {user_ctx.get('current_pnl_pct'):.2f}%
-
-# 分析指令
-请基于 **"宏观环境 + 持仓结构"** 进行深度推理（Chain of Thought）：
-
-1. **环境确认**：当前宏观环境（A50/美债）是助涨还是拖累？
-2. **趋势研判**：
-   - 短期趋势：80%以上的重仓股是否站稳 MA20？
-   - 中期趋势：权重股是否触碰到 MA60 压力位？
-3. **归因分析**：
-   - 今天的上涨是龙头股带动的真突破，还是跟风股的死猫跳？
-4. **操作建议 (T+1 核心)**：
-   - 用户当前处于 **{"盈利" if user_ctx.get('current_pnl_pct',0) > 0 else "亏损"}** 状态。
-   - **判定法则**：
-     - 若 (宏观向好 AND 持仓突破) -> **持有过夜 (博取更高收益)**。
-     - 若 (宏观承压 OR 触及MA60压力) -> **今日确权离场 (T+1止盈/止损)**。
-
-请输出 JSON 格式结论，包含字段：
-- `trend_assessment`: (简短趋势描述)
-- `action_signal`: (BUY / HOLD / SELL / WAIT)
-- `reasoning`: (详细的逻辑推演，必须引用上述数据)
-- `risk_warning`: (具体的风险点)
+请直接输出简报内容，不要废话。
 """
-        return prompt
-    
-    # 为了兼容性保留旧接口（可选）
-    def build_comprehensive_prompt(self, *args, **kwargs):
-        return "Legacy Prompt V4.6"
+
+    def build_sentiment_agent_prompt(self, news_list):
+        """角色2: 舆情风控官"""
+        # 简单清洗新闻列表，避免过长
+        news_str = "\n".join([f"- {n}" for n in news_list[:8]]) if news_list else "暂无重大新闻"
+        
+        return f"""
+# 角色: 舆情风控官
+# 任务: 阅读以下新闻标题，生成【市场情绪简报】。
+
+## 新闻流
+{news_str}
+
+## 分析要求
+1. **情绪评分**: 0 (极度恐慌) - 10 (极度贪婪)。
+2. **关键事件**: 指出可能影响大盘的单一重大事件 (如有)。
+3. **噪音过滤**: 忽略无关紧要的个股新闻，关注宏观/政策/地缘影响。
+
+请输出格式: "情绪评分: X/10\n摘要: ..."
+"""
+
+    def build_cio_agent_prompt(self, fund_ctx, macro_report, sentiment_report, risk_msg):
+        """角色3: 首席投资官 (CIO) - 做最终决定"""
+        return f"""
+# 角色: 基金管理委员会 CIO
+# 任务: 综合各部门报告，对标的【{fund_ctx['name']} ({fund_ctx['code']})】做出操作决定。
+
+## 1. 参谋部情报
+- **【宏观部】**: {macro_report}
+- **【舆情部】**: {sentiment_report}
+- **【风控部】**: {risk_msg}
+
+## 2. 标的实时数据
+- **类型**: {fund_ctx['type']}
+- **影子净值 (T+0估算)**: {fund_ctx['shadow_change']:+}%
+- **依据**: {fund_ctx['basis']}
+- **持仓状态**: {fund_ctx['holding_status']}
+
+## 决策逻辑
+1. **风控一票否决**: 如果风控部示警 (⛔)，必须执行防御操作。
+2. **顺势而为**: 如果宏观部看跌且影子净值下跌，不要试图抄底。
+3. **定投修正**: 如果是定投策略，且当前跌幅较大，可考虑维持或微量增加定投；若暴涨，可暂停定投。
+
+<thinking>
+(在此处进行逻辑推演，权衡宏观、舆情与个股表现的冲突点...)
+</thinking>
+
+```json
+{{
+    "signal": "BUY/SELL/HOLD",
+    "reason": "一句话决策理由",
+    "suggested_operation": "具体操作建议 (如: 买入 500元)"
+}}
+"""

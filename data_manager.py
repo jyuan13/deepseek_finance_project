@@ -1,116 +1,170 @@
-# deepseek_finance_project_V2/data_manager.py
+# deepseek_finance_project_V3/data_manager.py
 
-import os
+import sqlite3
 import pandas as pd
+import os
 import json
 from datetime import datetime
 
 class DataManager:
-    def __init__(self, data_dir="financial_data"):
-        self.data_dir = data_dir
-        if not os.path.exists(data_dir):
-            os.makedirs(data_dir)
+    """
+    [V3.9 数据仓库]
+    修复: 增加 meta_cache 表定义，防止 no such table 报错。
+    """
     
-    def list_saved_data(self):
-        """列出已保存的数据文件"""
-        data_files = []
-        for file in os.listdir(self.data_dir):
-            if file.endswith('.csv') or file.endswith('.json'):
-                data_files.append(file)
-        return data_files
-    
-    def save_data(self, data, filename, format='csv'):
-        """保存数据到文件"""
-        filepath = os.path.join(self.data_dir, f"{filename}.{format}")
-        try:
-            if format == 'csv':
-                data.to_csv(filepath)
-            elif format == 'json':
-                data.to_json(filepath, orient='records')
-            print(f"✅ 数据已保存到: {filepath}")
-            return True
-        except Exception as e:
-            print(f"❌ 保存数据失败: {e}")
-            return False
-    
-    def load_data(self, filename):
-        """从文件加载数据"""
-        filepath = os.path.join(self.data_dir, filename)
-        try:
-            if filename.endswith('.csv'):
-                return pd.read_csv(filepath, index_col=0, parse_dates=True)
-            elif filename.endswith('.json'):
-                return pd.read_json(filepath, orient='records')
-        except Exception as e:
-            print(f"❌ 加载数据失败: {e}")
-            return None
-            
-    def clear_all_data(self):
-        """[新增] 清空所有数据文件"""
-        try:
-            files = self.list_saved_data()
-            if not files:
-                print("⚠️  没有可清除的数据文件")
-                return True
-                
-            for f in files:
-                os.remove(os.path.join(self.data_dir, f))
-            print(f"✅ 已清除 {len(files)} 个历史数据文件")
-            return True
-        except Exception as e:
-            print(f"❌ 数据清除失败: {e}")
-            return False
-    
-    def manage_data(self):
-        """数据管理交互界面"""
-        print("\n🗂️  数据管理")
-        print("=" * 40)
+    def __init__(self, db_path="financial_data_v3.db"):
+        self.db_path = db_path
+        self._init_db()
+
+    def _get_conn(self):
+        return sqlite3.connect(self.db_path)
+
+    def _init_db(self):
+        """初始化数据库表结构 (自动修复缺失表)"""
+        conn = self._get_conn()
+        cursor = conn.cursor()
         
-        while True:
-            print("\n1. 查看已保存的数据")
-            print("2. 删除数据文件") 
-            print("3. 清理缓存数据 (清空所有)")
-            print("0. 返回主菜单")
-            print("-" * 40)
-            
-            choice = input("请选择操作: ").strip()
-            
-            if choice == "1":
-                files = self.list_saved_data()
-                if files:
-                    print("\n已保存的数据文件:")
-                    for i, file in enumerate(files, 1):
-                        print(f"{i}. {file}")
-                else:
-                    print("❌ 没有找到数据文件")
-            
-            elif choice == "2":
-                files = self.list_saved_data()
-                if files:
-                    print("\n选择要删除的文件:")
-                    for i, file in enumerate(files, 1):
-                        print(f"{i}. {file}")
-                    
-                    try:
-                        file_choice = int(input("请输入文件编号: ")) - 1
-                        if 0 <= file_choice < len(files):
-                            file_to_delete = os.path.join(self.data_dir, files[file_choice])
-                            os.remove(file_to_delete)
-                            print(f"✅ 已删除: {files[file_choice]}")
-                        else:
-                            print("❌ 无效的选择")
-                    except (ValueError, IndexError):
-                        print("❌ 请输入有效的编号")
-                else:
-                    print("❌ 没有可删除的文件")
-            
-            elif choice == "3":
-                confirm = input("⚠️ 确定要清空所有数据文件吗? (y/n): ").lower()
-                if confirm == 'y':
-                    self.clear_all_data()
-            
-            elif choice == "0":
-                break
-            
-            else:
-                print("❌ 无效的选择")
+        # 1. 基金净值表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS fund_nav (
+                fund_code TEXT,
+                date TEXT,
+                nav REAL,
+                daily_change REAL,
+                source TEXT DEFAULT 'akshare',
+                PRIMARY KEY (fund_code, date)
+            )
+        ''')
+        
+        # 2. 基金持仓表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS fund_holdings (
+                fund_code TEXT,
+                report_date TEXT,
+                stock_code TEXT,
+                stock_name TEXT,
+                weight REAL,
+                source TEXT DEFAULT 'akshare',
+                PRIMARY KEY (fund_code, report_date, stock_code)
+            )
+        ''')
+        
+        # 3. 市场行情表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS market_quotes (
+                symbol TEXT,
+                date TEXT,
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                volume REAL,
+                source TEXT,
+                PRIMARY KEY (symbol, date, source)
+            )
+        ''')
+        
+        # 4. [关键修复] 基础信息缓存表 (用于存储基金类型等元数据)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS meta_cache (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                update_time TEXT
+            )
+        ''')
+        
+        # 5. 舆情缓存表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS sentiment_cache (
+                symbol TEXT,
+                date TEXT,
+                news_summary TEXT,
+                sentiment_score REAL,
+                source TEXT,
+                created_at TEXT,
+                PRIMARY KEY (symbol, date, source)
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+
+    def save_market_data(self, df: pd.DataFrame, source="unknown"):
+        if df.empty: return
+        df = df.copy()
+        df['source'] = source
+        if 'date' in df.columns: df['date'] = df['date'].astype(str)
+        conn = self._get_conn()
+        try:
+            data = df.to_dict(orient='records')
+            sql = "INSERT OR REPLACE INTO market_quotes (symbol, date, open, high, low, close, volume, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            params = [(d['symbol'], d['date'], d.get('open',0), d.get('high',0), d.get('low',0), d.get('close',0), d.get('volume',0), d['source']) for d in data]
+            conn.cursor().executemany(sql, params)
+            conn.commit()
+        finally: conn.close()
+
+    def get_market_data(self, symbol, preferred_source="history_sync"):
+        conn = self._get_conn()
+        # 简单的查询逻辑，不强制 source，优先返回有数据的
+        query = f"SELECT * FROM market_quotes WHERE symbol='{symbol}' ORDER BY date ASC"
+        df = pd.read_sql(query, conn)
+        conn.close()
+        if not df.empty: 
+            df['date'] = pd.to_datetime(df['date'])
+        return df
+
+    def save_fund_nav(self, df):
+        if df.empty: return
+        df = df.copy()
+        df['date'] = df['date'].astype(str)
+        conn = self._get_conn()
+        try:
+            data = df.to_dict(orient='records')
+            sql = "INSERT OR REPLACE INTO fund_nav (fund_code, date, nav, daily_change, source) VALUES (?, ?, ?, ?, 'akshare')"
+            params = [(d['fund_code'], d['date'], d['nav'], d['daily_change']) for d in data]
+            conn.cursor().executemany(sql, params)
+            conn.commit()
+        finally: conn.close()
+
+    def get_fund_nav(self, fund_code, limit=30):
+        conn = self._get_conn()
+        df = pd.read_sql(f"SELECT * FROM fund_nav WHERE fund_code='{fund_code}' ORDER BY date DESC LIMIT {limit}", conn)
+        conn.close()
+        if not df.empty: 
+            df['date'] = pd.to_datetime(df['date'])
+            df = df.sort_values('date')
+        return df
+
+    def save_fund_holdings(self, df):
+        if df.empty: return
+        conn = self._get_conn()
+        try:
+            data = df.to_dict(orient='records')
+            sql = "INSERT OR REPLACE INTO fund_holdings (fund_code, report_date, stock_code, stock_name, weight, source) VALUES (?, ?, ?, ?, ?, 'akshare')"
+            params = [(d['fund_code'], d.get('report_date',''), d['stock_code'], d['stock_name'], d['weight']) for d in data]
+            conn.cursor().executemany(sql, params)
+            conn.commit()
+        finally: conn.close()
+
+    def get_latest_holdings(self, fund_code):
+        conn = self._get_conn()
+        res = conn.execute(f"SELECT MAX(report_date) FROM fund_holdings WHERE fund_code='{fund_code}'").fetchone()
+        if not res or not res[0]: 
+            conn.close()
+            return pd.DataFrame()
+        df = pd.read_sql(f"SELECT * FROM fund_holdings WHERE fund_code='{fund_code}' AND report_date='{res[0]}'", conn)
+        conn.close()
+        return df
+        
+    def clear_all_data(self):
+        """清空数据库 (危险操作)"""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        for table in ['fund_nav', 'fund_holdings', 'market_quotes', 'meta_cache', 'sentiment_cache']:
+            try:
+                cursor.execute(f"DELETE FROM {table}")
+            except:
+                pass
+        conn.commit()
+        conn.close()
+        print("⚠ 数据库已清空")

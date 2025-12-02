@@ -1,101 +1,161 @@
-# deepseek_finance_project_V2/fund_data_manager.py
+# deepseek_finance_project_V3/fund_data_manager.py
 
-import akshare as ak
 import pandas as pd
-from datetime import datetime
-import re
+import akshare as ak
+import json
+from datetime import datetime, timedelta
+from data_provider import DataProvider
+from data_manager import DataManager
 
 class FundDataManager:
     """
-    V5 核心组件：基金数据管理器
-    负责获取基金基本信息、持仓结构、实时估值等
+    [V3.1 基金数据管家]
+    升级: 智能识别基金类型 (Equity/Bond/Mix)，支持缓存
+    修复: AkShare 接口兼容性问题
     """
-
+    
     def __init__(self):
-        pass
+        self.provider = DataProvider()
+        self.db = DataManager() 
+
+    def get_fund_nav_history(self, fund_code, lookback_days=90):
+        df = self.db.get_fund_nav(fund_code, limit=lookback_days)
+        is_stale = True
+        if not df.empty:
+            last_date = df.iloc[-1]['date']
+            if (datetime.now() - last_date).days < 3:
+                is_stale = False
+        
+        if df.empty or is_stale:
+            print(f"🔄 [更新] 同步基金 {fund_code} 净值...")
+            new_df = self.provider.fetch_fund_nav_history(fund_code)
+            if not new_df.empty:
+                self.db.save_fund_nav(new_df)
+                df = self.db.get_fund_nav(fund_code, limit=lookback_days)
+        return df
+
+    def get_top_holdings(self, fund_code):
+        df = self.db.get_latest_holdings(fund_code)
+        if df.empty:
+            print(f"🔄 [更新] 同步基金 {fund_code} 持仓...")
+            new_df = self.provider.fetch_fund_portfolio(fund_code)
+            if not new_df.empty:
+                self.db.save_fund_holdings(new_df)
+                df = new_df
+        return df.to_dict(orient='records') if not df.empty else []
+
+    def update_market_quotes(self, symbol_list):
+        print(f"⚡ 正在检查 {len(symbol_list)} 只标的行情缓存...")
+        for symbol in symbol_list:
+            market = "US" if symbol.isalpha() or symbol.startswith('^') else "A"
+            df = self.db.get_market_data(symbol)
+            is_stale = True
+            if not df.empty:
+                last_date = df.iloc[-1]['date']
+                if (datetime.now() - last_date).days < 1:
+                    is_stale = False
+            
+            if df.empty or is_stale:
+                new_data = self.provider.market.fetch_history_kline(symbol, market=market)
+                if not new_data.empty:
+                    self.db.save_market_data(new_data, source="history_sync")
+
+    def get_realtime_price(self, symbol):
+        snapshot, valid = self.get_realtime_snapshot(symbol)
+        if valid:
+            return snapshot['price']
+        return None
+
+    def get_realtime_snapshot(self, symbol):
+        market = "US" if symbol.isalpha() or symbol.startswith('^') else "A"
+        return self.provider.market.get_quote_snapshot(symbol, market)
+
+    def get_aggregated_news(self, symbol):
+        return self.provider.news.fetch_sentiment_news(symbol)
+
+    def _map_fund_type(self, raw_type):
+        """辅助方法：将中文类型映射为系统类型"""
+        if "债" in raw_type or "固定收益" in raw_type:
+            return "bond"
+        elif "混合" in raw_type or "配置" in raw_type:
+            return "mix"
+        elif "货币" in raw_type:
+            return "bond"
+        return "stock"
+
+    def _fetch_fund_type_from_akshare(self, fund_code):
+        """[V3.2 修复版] 兼容性更强的类型获取"""
+        name = f"基金_{fund_code}"
+        ctype = "stock"
+        
+        # 方案 A: 尝试新接口 (fund_individual_basic_info_em)
+        # 这个接口信息最全，但旧版 akshare 没有
+        try:
+            if hasattr(ak, 'fund_individual_basic_info_em'):
+                df = ak.fund_individual_basic_info_em(symbol=fund_code)
+                if not df.empty:
+                    info_dict = df.set_index('item')['value'].to_dict()
+                    raw_type = info_dict.get('基金类型', '股票型')
+                    name = info_dict.get('基金简称', name)
+                    return self._map_fund_type(raw_type), name
+        except Exception:
+            pass # 失败则静默进入方案 B
+
+        # 方案 B: 尝试老接口 (fund_name_em)
+        # 这个接口极其稳定，但返回的是全量列表，速度稍慢
+        try:
+            # print(f"   ⚠️ 正在降级查找基金 {fund_code} 信息...") 
+            df_all = ak.fund_name_em()
+            # 筛选代码
+            row = df_all[df_all['基金代码'] == fund_code]
+            if not row.empty:
+                name = row.iloc[0]['基金简称']
+                raw_type = row.iloc[0]['基金类型']
+                return self._map_fund_type(raw_type), name
+        except Exception:
+            pass
+            
+        return ctype, name
 
     def get_fund_basic_info(self, fund_code):
-        """获取基金基本信息（名称、类型、规模）"""
-        try:
-            # 尝试从通用接口获取名称
-            df = ak.fund_name_em()
-            row = df[df['基金代码'] == fund_code]
-            
-            if not row.empty:
-                return {
-                    "code": fund_code,
-                    "name": row.iloc[0]['基金简称'],
-                    "type": row.iloc[0]['基金类型']
-                }
-            return {"code": fund_code, "name": "未知基金", "type": "未知"}
-        except Exception as e:
-            print(f"❌ 获取基金基础信息失败: {e}")
-            return {"code": fund_code, "name": "未知基金", "type": "Error"}
-
-    def get_top_holdings(self, fund_code, year=None):
         """
-        [核心] 获取基金前十大重仓股
+        智能类型推断 + 缓存
         """
-        if year is None:
-            year = str(datetime.now().year)
-            
-        try:
-            # 获取持仓数据
-            df = ak.fund_portfolio_hold_em(symbol=fund_code, date=year)
-            if df is None or df.empty:
-                # 尝试获取去年的（可能年初还没出年报）
-                prev_year = str(int(year) - 1)
-                df = ak.fund_portfolio_hold_em(symbol=fund_code, date=prev_year)
-            
-            if df is None or df.empty:
-                return []
-
-            # 提取最新季度的数据
-            latest_quarter = df['季度'].iloc[0]
-            quarter_data = df[df['季度'] == latest_quarter].head(10) # 取前10
-
-            holdings = []
-            for _, row in quarter_data.iterrows():
-                raw_code = str(row['股票代码'])
-                raw_name = str(row['股票名称'])
-                
-                # [关键] 智能代码对齐
-                clean_code = self._align_stock_code(raw_code, raw_name)
-                
-                holdings.append({
-                    "code": clean_code,
-                    "name": raw_name,
-                    "weight": float(row['占净值比例']),
-                    "raw_code": raw_code
-                })
-            
-            return holdings
-        except Exception as e:
-            print(f"⚠️ 无法获取持仓数据 ({fund_code}): {e}")
-            return []
-
-    def _align_stock_code(self, code, name):
-        """
-        智能识别股票市场并添加后缀
-        """
-        code = code.strip()
+        cache_key = f"fund_meta_{fund_code}"
         
-        # 港股 (5位数字)
-        if len(code) == 5 and code.isdigit():
-            return f"{code}.HK"
+        # 1. 查缓存
+        conn = self.db._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT value FROM meta_cache WHERE key=?", (cache_key,))
+            row = cursor.fetchone()
+            if row:
+                return json.loads(row[0])
+        except Exception:
+            pass # 表可能还没建好或者查询错误，直接跳过
+        finally:
+            conn.close()
+        
+        # 2. 联网获取 (使用兼容版方法)
+        ctype, name = self._fetch_fund_type_from_akshare(fund_code)
+        res = {"code": fund_code, "type": ctype, "name": name}
+        
+        # 3. 写入缓存
+        try:
+            conn = self.db._get_conn()
+            cursor = conn.cursor()
+            cursor.execute("INSERT OR REPLACE INTO meta_cache (key, value, update_time) VALUES (?, ?, ?)",
+                          (cache_key, json.dumps(res, ensure_ascii=False), datetime.now().strftime("%Y-%m-%d")))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"⚠️ 写入缓存失败: {e}")
             
-        # A股 (6位数字)
-        if len(code) == 6 and code.isdigit():
-            if code.startswith(('60', '68')):
-                return f"{code}.SH"
-            if code.startswith(('00', '30')):
-                return f"{code}.SZ"
-            # 北交所
-            if code.startswith(('4', '8')): 
-                return f"{code}.BJ"
-                
-        # 美股 (字母)
-        if re.match(r'^[A-Za-z]+$', code):
-            return code # yfinance 格式通常直接是字母
-            
-        return code
+        return res
+
+if __name__ == "__main__":
+    mgr = FundDataManager()
+    print("Testing Fund Type Logic...")
+    # 测试一个股票型和一个债券型
+    print(f"000001: {mgr.get_fund_basic_info('000001')}") 
+    print(f"000217: {mgr.get_fund_basic_info('000217')}")

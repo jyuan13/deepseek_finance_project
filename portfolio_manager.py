@@ -1,4 +1,4 @@
-# deepseek_finance_project_V2/portfolio_manager.py
+# deepseek_finance_project_V3/portfolio_manager.py
 
 import json
 import os
@@ -64,43 +64,48 @@ class PortfolioManager:
     def get_cash_balance(self):
         return self.portfolio.get('cash', 0)
     
-    def update_position(self, symbol, shares, cost_price=None, update_date=None):
+    def update_position(self, symbol, shares, cost_price=None, update_date=None, max_invest_limit=None):
+        """[V3.9] 更新持仓信息，包括限额"""
         if update_date is None:
             update_date = datetime.now().strftime('%Y-%m-%d')
         
         position_found = False
         for position in self.portfolio['positions_config']:
             if position['symbol'] == symbol:
-                position['current_shares'] = shares
+                position['current_shares'] = float(shares) # [修复] 确保是 float
                 position['last_buy_date'] = update_date
-                if cost_price:
-                    position['cost_price'] = cost_price
+                if cost_price is not None:
+                    position['cost_price'] = float(cost_price)
+                if max_invest_limit is not None:
+                    position['max_invest_limit'] = float(max_invest_limit)
                 position_found = True
                 break
         
         if not position_found and shares > 0:
             new_position = {
                 'symbol': symbol,
-                'current_shares': shares,
-                'cost_price': cost_price or 0,
+                'current_shares': float(shares),
+                'cost_price': float(cost_price) if cost_price else 0.0,
                 'last_buy_date': update_date,
                 'target_percent': 5,
                 'deviation_limit': 3,
                 'min_threshold': 1,
-                'investment_type': 'manual'
+                'investment_type': 'manual',
+                'max_invest_limit': float(max_invest_limit) if max_invest_limit else 0.0
             }
             self.portfolio['positions_config'].append(new_position)
         
         self.save_portfolio()
-        print(f"✅ 已更新持仓: {symbol} -> {shares}份")
+        print(f"✅ 已更新持仓: {symbol} -> {shares}份 (限额: {max_invest_limit if max_invest_limit else '无'})")
     
     def update_cash(self, new_cash_balance):
-        self.portfolio['cash'] = new_cash_balance
+        self.portfolio['cash'] = float(new_cash_balance)
         self.save_portfolio()
         print(f"✅ 现金余额已更新: {new_cash_balance}元")
     
     def add_new_position_config(self, symbol, target_percent=5, deviation_limit=3, 
-                               investment_type='manual', dca_config=None):
+                               investment_type='manual', dca_config=None, max_invest_limit=0):
+        """[V3.9] 添加新配置，支持限额"""
         for position in self.portfolio['positions_config']:
             if position['symbol'] == symbol:
                 print(f"⚠️  {symbol} 的配置已存在")
@@ -108,13 +113,14 @@ class PortfolioManager:
         
         new_position = {
             'symbol': symbol,
-            'current_shares': 0,
-            'cost_price': 0,
+            'current_shares': 0.0,
+            'cost_price': 0.0,
             'last_buy_date': '',
-            'target_percent': target_percent,
-            'deviation_limit': deviation_limit,
+            'target_percent': float(target_percent),
+            'deviation_limit': float(deviation_limit),
             'min_threshold': 1,
-            'investment_type': investment_type
+            'investment_type': investment_type,
+            'max_invest_limit': float(max_invest_limit)
         }
         
         if dca_config and investment_type in ['dca_fixed', 'dca_intelligent']:
@@ -122,48 +128,32 @@ class PortfolioManager:
         
         self.portfolio['positions_config'].append(new_position)
         self.save_portfolio()
-        print(f"✅ 已添加持仓配置: {symbol}")
+        print(f"✅ 已添加持仓配置: {symbol} (单日限额: {max_invest_limit})")
         return True
     
     def _validate_symbol_format(self, symbol):
-        """
-        [新增] 校验代码格式
-        返回: (是否合法, 提示信息)
-        """
+        """校验代码格式"""
         symbol = symbol.upper().strip()
-        
-        # 1. 常见后缀检查
         if symbol.endswith(('.SS', '.SH', '.SZ', '.HK', '.TW')):
             return True, "格式正确"
-            
-        # 2. 纯数字检查 (A股/港股简码)
-        # A股通常6位，港股通常4-5位
         if symbol.isdigit():
             if len(symbol) == 6:
                 return True, "A股代码 (建议添加 .SS/.SZ 后缀以防歧义)"
             elif 4 <= len(symbol) <= 5:
                 return True, "港股代码 (建议添加 .HK 后缀)"
             else:
-                return False, f"⚠️  纯数字代码长度({len(symbol)}位)不符合常规 (A股6位/港股4-5位)"
-                
-        # 3. 纯字母检查 (美股)
+                return False, f"⚠️  纯数字代码长度({len(symbol)}位)不符合常规"
         if symbol.isalpha():
             return True, "美股代码"
-            
-        # 4. 指数或其他
         if symbol.startswith('^'):
             return True, "指数代码"
-            
-        return False, "⚠️  代码格式异常 (建议使用标准格式: 代码.后缀)"
+        return False, "⚠️  代码格式异常"
 
-    # --- 核心计算功能 ---
     def get_position_pnl(self, symbol, current_price):
-        """计算单只标的浮动盈亏"""
         for pos in self.portfolio['positions_config']:
             if pos['symbol'] == symbol:
                 shares = pos.get('current_shares', 0)
                 cost = pos.get('cost_price', 0)
-                
                 if shares > 0 and cost > 0 and current_price > 0:
                     market_value = shares * current_price
                     cost_value = shares * cost
@@ -197,13 +187,14 @@ class PortfolioManager:
             positions = self.get_current_positions()
             if positions:
                 for pos in positions:
+                    limit_str = f"限额:{pos.get('max_invest_limit', 0)}" if pos.get('max_invest_limit') else "无限制"
                     if pos['current_shares'] > 0:
-                        print(f"  - {pos['symbol']}: {pos['current_shares']}份 (目标:{pos.get('target_percent',0)}%)")
+                        print(f"  - {pos['symbol']}: {pos['current_shares']}份 (目标:{pos.get('target_percent',0)}% | {limit_str})")
             else:
                 print("  - 暂无持仓")
             
             print("\n1. 更新现金余额")
-            print("2. 更新持仓份额")
+            print("2. 更新持仓份额/限额")
             print("3. 添加新标的配置")
             print("4. 查看详细配置")
             print("0. 返回主菜单")
@@ -218,35 +209,28 @@ class PortfolioManager:
             
             elif choice == "2":
                 symbol = input("标的代码 (如 513120.SS): ").strip().upper()
-                
-                # [新增] 校验逻辑
-                is_valid, msg = self._validate_symbol_format(symbol)
-                if not is_valid:
-                    print(msg)
-                    confirm = input("确认要使用此代码吗? (y/n): ").lower()
-                    if confirm != 'y':
-                        continue
-                elif "建议" in msg:
-                    print(f"💡 提示: {msg}")
-
-                try:
-                    shares = int(input("持有份额: "))
-                    cost_price = input("成本价 (可选): ")
-                    cost = float(cost_price) if cost_price else None
-                    self.update_position(symbol, shares, cost)
-                except ValueError: print("❌ 无效数字")
-            
-            elif choice == "3":
-                symbol = input("标的代码: ").strip().upper()
-                # [新增] 校验逻辑
                 is_valid, msg = self._validate_symbol_format(symbol)
                 if not is_valid:
                     print(msg)
                     if input("确认继续? (y/n): ").lower() != 'y': continue
 
                 try:
+                    shares = float(input("持有份额: ")) # [修复] 支持小数
+                    cost_price = input("成本价 (回车跳过): ")
+                    cost = float(cost_price) if cost_price else None
+                    
+                    limit_input = input("单日最大买入限额 (0表示无限制, 回车跳过): ")
+                    limit = float(limit_input) if limit_input else None
+                    
+                    self.update_position(symbol, shares, cost, max_invest_limit=limit)
+                except ValueError: print("❌ 无效数字")
+            
+            elif choice == "3":
+                symbol = input("标的代码: ").strip().upper()
+                try:
                     target = float(input("目标配置 (%): "))
                     dev = float(input("允许偏离 (%): "))
+                    limit = float(input("单日限额 (0为无): ") or 0)
                     inv_type = input("投资类型 (manual/dca): ")
                     dca = None
                     if inv_type == 'dca':
@@ -255,7 +239,7 @@ class PortfolioManager:
                             'frequency': 'weekly',
                             'execution_day': int(input("周几扣款 (1-7): "))
                         }
-                    self.add_new_position_config(symbol, target, dev, inv_type, dca)
+                    self.add_new_position_config(symbol, target, dev, inv_type, dca, max_invest_limit=limit)
                 except ValueError: print("❌ 无效输入")
             
             elif choice == "4":

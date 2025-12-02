@@ -1,60 +1,147 @@
-<div align="center">
+🚀 DeepSeek Finance Project V3
+版本: V3.0-05 (Internal Build) 定位: 面向场外基金投资者的“私人 AI 首席投资官 (CIO)” 核心架构: 投资委员会 (Investment Committee) + 影子净值 (Shadow NAV) + Kronos 时序预测
 
-# 🚀 DeepSeek Finance Project V3
-
-**基于 LLM 双大脑 (DeepSeek + Qwen) 的全天候智能投顾系统**
-
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![DeepSeek](https://img.shields.io/badge/AI-DeepSeek_V3-blue)](https://www.deepseek.com/)
-[![Qwen](https://img.shields.io/badge/AI-Qwen_Turbo-green)](https://tongyi.aliyun.com/)
-[![AkShare](https://img.shields.io/badge/Data-AkShare-orange)](https://akshare.xyz/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-
-</div>
+---
 
 ## 📖 项目简介 (Introduction)
 
-**DeepSeek Finance Project V3** 是一个为场外基金与股票投资者打造的自动化量化分析系统。它不仅仅是一个数据面板，更是一个具备**“双重人格”**的 AI 投资助理。
+**DeepSeek Finance Project V3** 是一个专为场外基金与全球资产配置打造的**“机构级”个人量化系统**。
 
-在 V3 版本中，我们引入了 **Qwen (通义千问)** 作为第二大脑，与 **DeepSeek** 形成“博弈与互证”机制——DeepSeek 负责深度逻辑推理与宏观把控，Qwen 负责实时数据校验与风险纠偏，从而显著降低大模型的“幻觉”风险。
+本项目不仅仅是一个数据面板，而是一个由 **CIO (DeepSeek)**、**风控官 (Qwen)**、**量化研究员 (Kronos)** 和 **数据分析师 (RBSA/Shadow)** 组成的**虚拟投资委员会**。系统旨在解决个人投资者面临的三大痛点：
 
-系统的核心目标是解决场外基金交易中的**净值滞后痛点**，通过穿透持仓计算“影子净值 (Shadow NAV)”，助你在每日 14:30 做出精准决策。
+1.  **盲盒交易**：场外基金净值滞后，无法在盘中（14:30）做出精准决策。
+2.  **幻觉风险**：单一 LLM 容易一本正经地胡说八道，缺乏事实核查与风控对抗。
+3.  **风格漂移**：无法识别基金经理是否挂羊头卖狗肉（如债基偷买股票）。
 
-## ✨ 核心特性 (Key Features)
+---
 
-### 🧠 双核智脑 (Dual-Core AI Brain)
-- **DeepSeek (CIO 角色)**: 负责制定宏观策略，综合分析美债、汇率及行业趋势，给出最终的买卖建议。
-- **Qwen (风控官 角色) [NEW]**: 引入 Qwen API 进行对抗性审查。当 DeepSeek 建议“激进加仓”时，Qwen 会基于实时舆情进行“反向压力测试”，确保决策稳健。
+## 🏗️ 系统架构与数据流 (System Architecture)
 
-### 🔮 影子净值引擎 (Shadow NAV Engine)
-- **持仓穿透**: 自动获取基金季报的前十大重仓股。
-- **实时估值**: 并发抓取 A 股、港股、美股重仓股的实时报价，计算基金盘中涨跌幅。
-- **T+0 决策**: 告别“盲买”，在收盘前 30 分钟预知当日净值。
+本系统采用模块化分层设计，模拟专业投资机构的决策流水线：
 
-### 🛡️ 双轨数据与容灾 (Dual-Source Data)
-- **AkShare (主力)**: 覆盖 A 股全市场行情、资金流向、ETF 份额变动及新闻联播政策信号。
-- **YFinance (辅助)**: 覆盖纳指、标普 500、黄金、原油及全球外汇数据。
-- **自动切换**: 当某一数据源响应超时，系统自动切换至备用源，确保 14:30 任务必达。
+### 1. 全域感知层 (Data Layer)
+* **主力数据源 (AkShare)**: 负责获取 A 股/港股实时行情、基金持仓结构、北向资金流向、ETF 份额变动及宏观利率。
+* **全球视野源 (YFinance)**: 负责获取纳斯达克期货、标普 500、黄金 (GC=F)、原油及美元指数实时报价，对齐全球交易时区。
+* **舆情监控源 (Sentiment Engine)**: 抓取新闻联播政策信号、财联社快讯及市场热度榜（逆向指标）。
 
-### 🧬 策略进化与 RAG 记忆 (Evolution & RAG)
-- **ChromaDB 向量库**: 存储历史研报、专家观点及过往的预测记录。
-- **自我反思**: 系统会自动记录每日预测并在 5 天后回测。如果预测错误，AI 会强制进行“复盘反思”，并将教训写入长期记忆库。
+### 2. 硬核计算层 (Quant Engines)
+* **🔮 影子净值引擎 (Shadow NAV)**: 穿透基金季报持仓，并发抓取重仓股实时快照，计算 T+0 盘中涨跌幅。
+* **🕵️ RBSA 风格侦探**: 基于 Lasso 回归分析基金净值与基准指数（纳指/沪深300/国债）的相关性，识别“风格漂移”。
+* **🤖 Kronos 时序预测**: 加载本地深度学习模型，将今日实时数据注入历史 K 线，预测 T+1 日的趋势概率。
+* **🛡️ 动态风控卫士**: 根据资产类型（股票/债券/混合）加载不同的止损与回撤阈值。
 
-## 🛠️ 技术架构 (Tech Stack)
+### 3. 双脑决策层 (Dual-Brain Decision)
+* **Prompt Builder**: 将量化数据、宏观环境、舆情摘要组装成结构化提示词。
+* **DeepSeek (CIO 角色)**: 负责进攻与宏观策略，基于所有信息生成买卖逻辑。
+* **Qwen (风控/思考 角色)**: 负责防守与逻辑审查，提供第二意见或直接进行对抗性测试（V3.x 规划中）。
 
-| 模块 | 技术组件 | 职责 |
-| :--- | :--- | :--- |
-| **决策层** | `DeepSeek-V3`, `Qwen-Turbo` | 逻辑推理、策略生成、风险对抗 |
-| **数据层** | `AkShare`, `YFinance`, `Pandas` | 行情获取、清洗、ETL |
-| **计算层** | `TechnicalEngine` | 影子净值计算、均线形态识别、RSI/MACD 分析 |
-| **记忆层** | `ChromaDB`, `SQLite` | 向量化知识库、策略回测数据库 |
-| **舆情层** | `SentimentEngine` | 新闻联播关键词提取、市场热度逆向指标 |
+### 4. 执行层 (Execution Layer)
+* **HTML 报告生成**: 输出包含可视化卡片、操作指令和风险提示的富文本简报。
+* **通知推送**: 通过邮件或微信直达用户。
 
-## 🚀 快速开始 (Quick Start)
+---
 
-### 1. 环境准备
-确保你的 Python 版本 >= 3.10。
-```bash
-git clone [https://github.com/your-repo/deepseek_finance_project.git](https://github.com/your-repo/deepseek_finance_project.git)
-cd deepseek_finance_project_V3
+## ✨ 核心功能详解 (Core Features)
+
+### 1. 🔮 影子净值引擎 (Shadow NAV Engine)
+> **核心价值**：打破场外基金 T+1 数据滞后，实现 14:30 精准择时。
+
+* **实现逻辑**：
+    * 调用 `fund_data_manager.py` 获取基金前十大重仓股及其权重。
+    * `shadow_engine.py` 使用线程池并发请求 `AkShare/YFinance` 获取实时快照 (`Snapshot`)。
+    * **冷启动优化**：直接利用快照中的 `prev_close` 计算涨跌，无需依赖本地历史数据库，新基金即插即用。
+    * **动态修正**：根据监控到的持仓权重占比（如 70%），动态调整放大系数，避免估值失真。
+
+### 2. 🕵️ RBSA 风格侦探 (Style Detective)
+> **核心价值**：通过数学手段透视基金经理的真实底牌，防止被“挂羊头卖狗肉”坑害。
+
+* **实现逻辑**：
+    * `rbsa_engine.py` 获取基金近 60 日净值走势与一组基准指数（纳指、科技、红利、国债等）。
+    * **鲁棒性对齐**：使用 `Outer Join` + `fillna(0)` 完美处理中美节假日导致的数据错位，防止样本丢失。
+    * 执行 Lasso 回归，输出基金在各个因子上的真实暴露权重（如：名义是消费基，实际主要持仓相关性显示为半导体）。
+
+### 3. 🤖 Kronos 时序预测 (AI Forecaster)
+> **核心价值**：利用 Transformer 架构模型预测大盘短期趋势。
+
+* **实现逻辑**：
+    * 集成 `Kronos (Small)` 预训练模型，通过 `kronos_adapter.py` 进行适配。
+    * **实时注入 (Realtime Injection)**：在推理前，强制将今日 14:30 的实时行情拼接到历史 K 线末尾，防止模型基于昨天的数据预测今天。
+    * **标的去噪**：使用原生指数代码（如 `^IXIC`）替代 ETF 代码，消除溢价/折价带来的预测噪音。
+
+### 4. 🧠 双脑博弈与 RAG 记忆 (Dual-Brain & RAG)
+> **核心价值**：降低 AI 幻觉，让决策具备长期记忆。
+
+* **实现逻辑**：
+    * **记忆库**：使用 `ChromaDB` (`financial_brain.py`) 存储研报 PDF 切片和顶级投行观点。
+    * **滑动窗口**：`DeepSeekClient` 实现对话历史的自动裁剪，防止 Token 费用爆炸。
+    * **双模切换**：支持在 DeepSeek（深度推理）和 Qwen（快速风控）之间无缝切换。
+
+---
+🛠️ 快速开始 (Quick Start)
+1. 环境准备
+确保已安装 Python 3.10+。
+
+Bash
+
+# 安装依赖
 pip install -r requirements.txt
+⚠️ 重要: 请将 Kronos 项目的 model 文件夹完整复制到本项目根目录下。
+
+2. 配置 API Key
+在根目录创建 .env 文件：
+
+代码段
+
+Qwen_API_KEY=sk-xxxxxxxx        # 阿里云百炼 (推荐)
+DEEPSEEK_API_KEY=sk-xxxxxxx     # DeepSeek (备用)
+Finnhub_API_Key=xxxx            # 舆情源 (可选)
+Alpha_Vantage_API_Key=xxxx      # 舆情源 (可选)
+3. 配置持仓
+运行 GUI 工具生成配置文件：
+
+Bash
+
+python main.py
+# 选择菜单 "6. 🛠️ 构建持仓配置工具"
+# 运行生成的 "持仓配置小工具.exe" 录入您的基金代码、成本和限额
+4. 启动分析
+Bash
+
+python main.py
+# 选择 "1. 🚀 智能金融分析"
+🗺️ 开发路线图 (Roadmap)
+✅ 已完成 (V3.0)
+[x] 影子净值并发计算 (ThreadPool)
+
+[x] Kronos 模型集成与实时快照拼接
+
+[x] 基于资产类型的动态风控 (Risk Guard)
+
+[x] 多源舆情并发获取
+
+[x] 图形化持仓配置工具 (GUI)
+
+📅 待更新 (Planned for V3.1+)
+1. 优化系统重置逻辑 (Safe Reset)
+现状: 99. 系统重置 会无差别删除所有数据，包括用户辛苦录入的 my_portfolio.json。
+
+计划: 修改 perform_system_reset，豁免持仓配置文件，仅清除缓存数据库 (SQLite)、日志文件和临时记忆，保护用户资产数据。
+
+2. 统一分析报告 (Unified Dashboard)
+现状: 分析 10 只基金会生成 10 个独立的 .html 文件，查看不便。
+
+计划: 重构报告生成模块。在批量分析时，将所有标的的结论汇总到一个 Daily_Report_YYYYMMDD.html 中，形成一个包含“宏观概览”+“个股卡片流”的完整日报。
+
+3. 双脑博弈架构 (Dual-LLM Adversarial Network)
+现状: Qwen 和 DeepSeek 是“主备切换”关系，一次只能用一个。
+
+计划: 引入 “红蓝军对抗” 机制，让两个模型协同工作：
+
+Qwen (分析师): 负责读取数据，挖掘机会，产出激进的 BUY 建议。
+
+DeepSeek (风控官): 负责审查 Qwen 的建议，寻找逻辑漏洞和风险点，进行“驳回”或“批准”。
+
+最终输出: 由系统综合两者的“辩论结果”，给出更客观的最终指令。
+
+⚠️ 免责声明
+本项目仅供技术研究与学习使用，不构成任何投资建议。金融市场有风险，模型预测仅供参考，请根据自身风险承受能力独立决策。
