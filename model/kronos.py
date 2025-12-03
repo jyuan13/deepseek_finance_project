@@ -470,12 +470,18 @@ def auto_regressive_inference(tokenizer, model, x, x_stamp, y_stamp, max_context
 
 
 def calc_time_stamps(x_timestamp):
+    # [Fix] Convert to DatetimeIndex to handle both Series and DatetimeIndex inputs
+    if isinstance(x_timestamp, pd.DatetimeIndex):
+        ts = x_timestamp
+    else:
+        ts = pd.DatetimeIndex(x_timestamp)
+        
     time_df = pd.DataFrame()
-    time_df['minute'] = x_timestamp.dt.minute
-    time_df['hour'] = x_timestamp.dt.hour
-    time_df['weekday'] = x_timestamp.dt.weekday
-    time_df['day'] = x_timestamp.dt.day
-    time_df['month'] = x_timestamp.dt.month
+    time_df['minute'] = ts.minute
+    time_df['hour'] = ts.hour
+    time_df['weekday'] = ts.dayofweek
+    time_df['day'] = ts.day
+    time_df['month'] = ts.month
     return time_df
 
 
@@ -649,4 +655,3 @@ class KronosPredictor:
             pred_dfs.append(pred_df)
 
         return pred_dfs
-

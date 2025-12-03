@@ -20,10 +20,12 @@ class ShadowEngine:
         symbol = stock['stock_code']
         weight = float(stock['weight'])
         
-        # [V3.9] 直接获取快照，包含现价和昨收
+        # 直接获取快照，包含现价和昨收
         snapshot, valid = self.fdm.get_realtime_snapshot(symbol)
         
         if not valid or not snapshot:
+            # [新增] 调试信息，方便定位哪个股票失败
+            # print(f"   ⚠️ 获取快照失败: {stock['stock_name']} ({symbol})")
             return None
             
         current_price = snapshot['price']
@@ -49,7 +51,6 @@ class ShadowEngine:
 
         total_monitored_weight = 0.0
         weighted_change_sum = 0.0
-        details = []
         
         print(f"   📊 正在计算 {fund_code} 影子净值 (并发快照扫描 {len(fund_holdings)} 只重仓股)...")
         
@@ -61,12 +62,11 @@ class ShadowEngine:
                 if res:
                     weighted_change_sum += res['pct_chg'] * res['weight']
                     total_monitored_weight += res['weight']
-                    # details.append(f"{res['name']}:{res['pct_chg']:.1f}%")
 
         if total_monitored_weight == 0:
             return 0.0, "❌ 数据缺失: 无法获取行情快照"
 
-        # [V3.9] 动态归一化与置信度检查
+        # 动态归一化与置信度检查
         stock_portion_change = weighted_change_sum / total_monitored_weight
         
         # 动态修正系数

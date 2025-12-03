@@ -14,11 +14,34 @@ class PortfolioManager:
     def load_portfolio(self):
         """加载投资组合配置"""
         if not os.path.exists(self.portfolio_file):
+            print(f"ℹ️ 未找到配置文件 {self.portfolio_file}，将创建默认配置。")
             return self._create_default_portfolio()
         
         try:
             with open(self.portfolio_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                content = f.read()
+                if not content.strip():
+                    print("⚠️ 配置文件为空，将重置为默认。")
+                    return self._create_default_portfolio()
+                
+                data = json.loads(content)
+                
+                # 简单校验数据结构
+                if not isinstance(data, dict):
+                    raise ValueError("配置根节点必须是对象 (dict)")
+                if 'positions_config' not in data:
+                    print("⚠️ 配置缺少 'positions_config' 字段，已自动修复。")
+                    data['positions_config'] = []
+                if 'cash' not in data:
+                    print("⚠️ 配置缺少 'cash' 字段，重置为 0。")
+                    data['cash'] = 0.0
+                    
+                return data
+
+        except json.JSONDecodeError as e:
+            print(f"❌ 配置文件 JSON 格式错误: {e}")
+            print("   建议备份后删除该文件，让程序重新生成。")
+            return {}
         except Exception as e:
             print(f"❌ 加载投资组合文件失败: {e}")
             return {}
@@ -59,6 +82,7 @@ class PortfolioManager:
         return True
     
     def get_current_positions(self):
+        # 增加防御性编程，确保返回列表
         return self.portfolio.get('positions_config', [])
     
     def get_cash_balance(self):
@@ -66,25 +90,43 @@ class PortfolioManager:
     
     def update_position(self, symbol, shares, cost_price=None, update_date=None, max_invest_limit=None):
         """[V3.9] 更新持仓信息，包括限额"""
+        if not symbol:
+            print("❌ 更新失败: 标的代码不能为空")
+            return
+            
         if update_date is None:
             update_date = datetime.now().strftime('%Y-%m-%d')
         
+        try:
+            shares = float(shares)
+        except (ValueError, TypeError):
+            print(f"❌ 份额数值异常: {shares}")
+            return
+
         position_found = False
+        # 确保 positions_config 存在
+        if 'positions_config' not in self.portfolio:
+             self.portfolio['positions_config'] = []
+
         for position in self.portfolio['positions_config']:
             if position['symbol'] == symbol:
-                position['current_shares'] = float(shares) # [修复] 确保是 float
+                position['current_shares'] = shares
                 position['last_buy_date'] = update_date
                 if cost_price is not None:
-                    position['cost_price'] = float(cost_price)
+                    try:
+                        position['cost_price'] = float(cost_price)
+                    except ValueError: pass # 忽略无效的成本价
                 if max_invest_limit is not None:
-                    position['max_invest_limit'] = float(max_invest_limit)
+                    try:
+                        position['max_invest_limit'] = float(max_invest_limit)
+                    except ValueError: pass
                 position_found = True
                 break
         
         if not position_found and shares > 0:
             new_position = {
                 'symbol': symbol,
-                'current_shares': float(shares),
+                'current_shares': shares,
                 'cost_price': float(cost_price) if cost_price else 0.0,
                 'last_buy_date': update_date,
                 'target_percent': 5,
@@ -95,33 +137,45 @@ class PortfolioManager:
             }
             self.portfolio['positions_config'].append(new_position)
         
-        self.save_portfolio()
-        print(f"✅ 已更新持仓: {symbol} -> {shares}份 (限额: {max_invest_limit if max_invest_limit else '无'})")
+        if self.save_portfolio():
+            print(f"✅ 已更新持仓: {symbol} -> {shares}份 (限额: {max_invest_limit if max_invest_limit else '无'})")
+        else:
+            print("❌ 更新成功但保存文件失败，请检查磁盘权限。")
     
     def update_cash(self, new_cash_balance):
-        self.portfolio['cash'] = float(new_cash_balance)
-        self.save_portfolio()
-        print(f"✅ 现金余额已更新: {new_cash_balance}元")
+        try:
+            self.portfolio['cash'] = float(new_cash_balance)
+            self.save_portfolio()
+            print(f"✅ 现金余额已更新: {new_cash_balance}元")
+        except ValueError:
+            print("❌ 现金更新失败: 输入必须为数字")
     
     def add_new_position_config(self, symbol, target_percent=5, deviation_limit=3, 
                                investment_type='manual', dca_config=None, max_invest_limit=0):
         """[V3.9] 添加新配置，支持限额"""
+        if 'positions_config' not in self.portfolio:
+            self.portfolio['positions_config'] = []
+
         for position in self.portfolio['positions_config']:
             if position['symbol'] == symbol:
                 print(f"⚠️  {symbol} 的配置已存在")
                 return False
         
-        new_position = {
-            'symbol': symbol,
-            'current_shares': 0.0,
-            'cost_price': 0.0,
-            'last_buy_date': '',
-            'target_percent': float(target_percent),
-            'deviation_limit': float(deviation_limit),
-            'min_threshold': 1,
-            'investment_type': investment_type,
-            'max_invest_limit': float(max_invest_limit)
-        }
+        try:
+            new_position = {
+                'symbol': symbol,
+                'current_shares': 0.0,
+                'cost_price': 0.0,
+                'last_buy_date': '',
+                'target_percent': float(target_percent),
+                'deviation_limit': float(deviation_limit),
+                'min_threshold': 1,
+                'investment_type': investment_type,
+                'max_invest_limit': float(max_invest_limit)
+            }
+        except ValueError:
+            print("❌ 添加配置失败: 参数必须为数字")
+            return False
         
         if dca_config and investment_type in ['dca_fixed', 'dca_intelligent']:
             new_position['dca_config'] = dca_config
@@ -133,6 +187,7 @@ class PortfolioManager:
     
     def _validate_symbol_format(self, symbol):
         """校验代码格式"""
+        if not symbol: return False, "代码不能为空"
         symbol = symbol.upper().strip()
         if symbol.endswith(('.SS', '.SH', '.SZ', '.HK', '.TW')):
             return True, "格式正确"
@@ -150,7 +205,7 @@ class PortfolioManager:
         return False, "⚠️  代码格式异常"
 
     def get_position_pnl(self, symbol, current_price):
-        for pos in self.portfolio['positions_config']:
+        for pos in self.portfolio.get('positions_config', []):
             if pos['symbol'] == symbol:
                 shares = pos.get('current_shares', 0)
                 cost = pos.get('cost_price', 0)
@@ -163,7 +218,7 @@ class PortfolioManager:
         return 0.0, 0.0
 
     def get_position_valuation(self, symbol, current_price):
-        for pos in self.portfolio['positions_config']:
+        for pos in self.portfolio.get('positions_config', []):
             if pos['symbol'] == symbol:
                 shares = pos.get('current_shares', 0)
                 if shares > 0:
@@ -215,7 +270,8 @@ class PortfolioManager:
                     if input("确认继续? (y/n): ").lower() != 'y': continue
 
                 try:
-                    shares = float(input("持有份额: ")) # [修复] 支持小数
+                    shares_input = input("持有份额: ")
+                    shares = float(shares_input) # [修复] 支持小数
                     cost_price = input("成本价 (回车跳过): ")
                     cost = float(cost_price) if cost_price else None
                     
@@ -240,7 +296,7 @@ class PortfolioManager:
                             'execution_day': int(input("周几扣款 (1-7): "))
                         }
                     self.add_new_position_config(symbol, target, dev, inv_type, dca, max_invest_limit=limit)
-                except ValueError: print("❌ 无效输入")
+                except ValueError: print("❌ 无效输入，请确保数值正确")
             
             elif choice == "4":
                 print(json.dumps(self.portfolio, ensure_ascii=False, indent=2))

@@ -30,6 +30,34 @@ def print_banner():
     print(f"    Build Date: {BUILD_DATE}")
     print("=" * 60)
 
+def auto_update_libs():
+    """
+    [V3.13] 启动时自动更新关键数据源库 (AkShare/Baostock)
+    防止因数据源接口变更导致获取失败
+    """
+    target_libs = ["akshare", "baostock"]
+    print("\n🔄 正在检查并更新核心数据源库 (AkShare/Baostock)...")
+    print("   (使用 pypi.org 简易源，如果网络不通请手动更新)")
+    
+    for lib in target_libs:
+        try:
+            # 构造 pip 更新指令
+            # pip install --upgrade package -i https://pypi.org/simple
+            cmd = [
+                sys.executable, "-m", "pip", "install", 
+                "--upgrade", lib, 
+                "-i", "https://pypi.org/simple"
+            ]
+            
+            # 使用 subprocess 调用，静默输出，仅在报错时提示
+            # stdout=subprocess.DEVNULL 可以隐藏正常输出，让启动界面更清爽
+            subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # print(f"   ✅ {lib} 检查完毕")
+        except Exception as e:
+            print(f"   ⚠️ {lib} 自动更新失败: {e} (可忽略，继续运行)")
+    
+    print("   ✅ 依赖库检查完毕")
+
 def build_gui_tool():
     print("\n🔨 正在构建持仓配置工具 (EXE)...")
     script_name = "portfolio_gui.py"
@@ -82,25 +110,43 @@ def build_gui_tool():
         print(f"❌ 发生异常: {e}")
 
 def main():
+    # [V3.13] 启动前先检查更新
+    auto_update_libs()
+    
     print_banner()
     
+    # --- 用户配置区 ---
+    # 在这里修改默认首选 AI ( "qwen" 或 "deepseek" )
+    PREFERRED_PROVIDER = "qwen" 
+    # ------------------
+
     qwen_key = os.environ.get("Qwen_API_KEY") or os.environ.get("DASHSCOPE_API_KEY")
     deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
     
     api_key = None
-    provider = "deepseek"  # 默认首选
+    provider = PREFERRED_PROVIDER
     
-    if deepseek_key:
-        print("✅ 检测到 DeepSeek API Key...")
-        api_key = deepseek_key
-        provider = "deepseek"
-    elif qwen_key:
+    # 智能 Key 选择逻辑
+    if PREFERRED_PROVIDER == "qwen" and qwen_key:
         print("✅ 检测到 Qwen API Key，激活 Qwen-Plus 思考模式...")
         api_key = qwen_key
         provider = "qwen"
+    elif PREFERRED_PROVIDER == "deepseek" and deepseek_key:
+        print("✅ 检测到 DeepSeek API Key...")
+        api_key = deepseek_key
+        provider = "deepseek"
+    # 如果首选不可用，尝试备选
+    elif qwen_key:
+        print("⚠️ 首选 API 未找到，自动切换至 Qwen...")
+        api_key = qwen_key
+        provider = "qwen"
+    elif deepseek_key:
+        print("⚠️ 首选 API 未找到，自动切换至 DeepSeek...")
+        api_key = deepseek_key
+        provider = "deepseek"
     else:
-        print("⚠️  未检测到 API Key")
-        provider_input = input("请选择提供商 [1] Qwen / [2] DeepSeek: ").strip()
+        print("⚠️  未检测到任何 API Key")
+        provider_input = input("请手动选择提供商 [1] Qwen / [2] DeepSeek: ").strip()
         if provider_input == "2":
             provider = "deepseek"
             api_key = input("API Key: ").strip()

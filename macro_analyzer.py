@@ -1,8 +1,10 @@
-# deepseek_finance_project_V2/macro_analyzer.py
+# deepseek_finance_project_V3/macro_analyzer.py
 
 import pandas_datareader.data as web
 import yfinance as yf
 import akshare as ak
+import pandas as pd
+import numpy as np
 import datetime
 from datetime import timedelta
 from typing import Dict, Any
@@ -10,6 +12,7 @@ from typing import Dict, Any
 class MacroAnalyzer:
     """
     宏观数据分析器 - 集成 AKShare 双轨验证
+    [V3.4 优化] 增加详细进度打印，防止 YFinance 阻塞时用户以为死机
     """
     
     def __init__(self):
@@ -20,36 +23,55 @@ class MacroAnalyzer:
     
     def analyze_macro_liquidity(self) -> Dict[str, Any]:
         """分析宏观流动性"""
-        data = {}
+        print("   ⏳ 正在分析宏观流动性 (美债/美元)...")
+        data = {
+            "us_10y": np.nan,
+            "dxy": np.nan,
+            "cn_10y": np.nan,
+            "us_inflation_exp": 2.24,  # 静态预设值
+            "spread_cn_us": "N/A"
+        }
+        
         try:
-            # 1. 美债与通胀 (FRED)
+            # 1. 美债 10年期收益率 (优先 AkShare)
             try:
-                start = datetime.datetime.now() - timedelta(days=365)
-                fred = web.DataReader(['DGS10', 'T10YIE'], 'fred', start)
-                data['us_10y'] = fred['DGS10'].iloc[-1]
-                data['us_inflation_exp'] = fred['T10YIE'].iloc[-1]
+                # bond_zh_us_rate 返回: 日期, 中国国债, 美国国债...
+                df_bond = ak.bond_zh_us_rate()
+                if not df_bond.empty:
+                    us_col = [c for c in df_bond.columns if "10年" in c and "美国" in c]
+                    if us_col:
+                        data["us_10y"] = float(df_bond.iloc[-1][us_col[0]])
+                    
+                    cn_col = [c for c in df_bond.columns if "10年" in c and "中国" in c]
+                    if cn_col:
+                        data["cn_10y"] = float(df_bond.iloc[-1][cn_col[0]])
+            except Exception as e:
+                print(f"   ⚠️ AkShare 宏观数据获取部分失败: {e}")
+
+            # 2. 如果 AkShare 没拿到美债，尝试 FRED
+            if np.isnan(data['us_10y']):
+                try:
+                    start = datetime.datetime.now() - timedelta(days=30)
+                    fred = web.DataReader(['DGS10'], 'fred', start)
+                    data['us_10y'] = fred['DGS10'].iloc[-1]
+                except: pass
+
+            # 3. 美元指数 (DXY)
+            try:
+                df_dxy = ak.index_us_stock_sina(symbol=".DINI")
+                if not df_dxy.empty:
+                    data["dxy"] = float(df_dxy.iloc[-1]['close'])
             except:
-                data['us_10y'] = "N/A"
-                data['us_inflation_exp'] = "N/A"
+                try:
+                    dxy = yf.Ticker("DX-Y.NYB").history(period="5d")
+                    if not dxy.empty:
+                        data['dxy'] = dxy['Close'].iloc[-1]
+                except: pass
             
-            # 2. 汇率 (YFinance)
-            try:
-                dxy = yf.Ticker("DX-Y.NYB").history(period="5d")
-                data['dxy'] = dxy['Close'].iloc[-1]
-            except:
-                data['dxy'] = "N/A"
-            
-            # 3. 中国国债 (AKShare)
-            try:
-                cn_bond = ak.bond_zh_us_rate()
-                data['cn_10y'] = cn_bond['中国国债收益率10年'].iloc[-1]
-                # 计算利差
-                if isinstance(data['us_10y'], (int, float)):
+            # 4. 计算利差
+            if isinstance(data['us_10y'], (int, float)) and isinstance(data['cn_10y'], (int, float)):
+                if not np.isnan(data['us_10y']) and not np.isnan(data['cn_10y']):
                     data['spread_cn_us'] = data['cn_10y'] - data['us_10y']
-                else:
-                    data['spread_cn_us'] = "N/A"
-            except:
-                data['cn_10y'] = "N/A"
                 
         except Exception as e:
             data['error'] = str(e)
@@ -60,7 +82,6 @@ class MacroAnalyzer:
         """分析跨境资金流"""
         flows = {}
         try:
-            # 北向资金 (AKShare)
             north_data = None
             try:
                 if hasattr(ak, 'stock_hsgt_north_net_flow_in_em'):
@@ -70,9 +91,7 @@ class MacroAnalyzer:
             except: pass
 
             if north_data is not None and not north_data.empty:
-                # --- 修改为更精确的查找，防止误读股票代码列 ---
                 val_col = None
-                # 优先找我们要的资金列名
                 for col in ['value', '当日净流入', '净买入额', 'net_amount']:
                     if col in north_data.columns:
                         val_col = col
@@ -81,7 +100,6 @@ class MacroAnalyzer:
                 if val_col:
                     flows['north_money'] = north_data.iloc[-1][val_col]
                 else:
-                    # 如果找不到明确的资金列，宁可显示报错也不要瞎猜最后一列（因为最后一列可能是代码）
                     flows['north_money'] = "列名匹配失败"
             else:
                 flows['north_money'] = "暂无数据"
@@ -100,34 +118,57 @@ class MacroAnalyzer:
         trends = {}
         
         for name, symbol in indices_config.items():
+            # [V3.4 新增] 打印当前处理进度
+            print(f"   ⏳ 正在获取 {name} ({symbol})...")
+            
             trend_result = "N/A"
             
             # 1. 优先尝试 YFinance
             try:
                 clean_sym = symbol.replace('.SH', '.SS') if '.SH' in symbol else symbol
-                hist = yf.Ticker(clean_sym).history(period="60d")
+                hist = yf.Ticker(clean_sym).history(period="180d")
                 if not hist.empty:
                     trend_result = self._calculate_trend(hist)
             except:
                 pass
             
-            # 2. 如果失败，且是特定指数，尝试 AKShare 兜底
-            if trend_result == "N/A":
+            # 2. 如果失败，尝试 AKShare 兜底
+            if trend_result in ["N/A", "Data Insufficient"]:
+                # print(f"      ⚠️ YFinance 数据不足，尝试 AkShare 修复 {name}...")
                 try:
                     ak_hist = None
-                    if name == 'China_A50': # 000016
+                    if name == 'China_A50': 
                         ak_hist = ak.stock_zh_index_daily(symbol="sh000016")
-                    elif name == 'HangSeng_Tech': # 恒生科技
-                        # 恒生科技指数 AKShare 可能需要特定接口，这里用恒生指数作为近似测试
-                        # 或者尝试新浪接口
-                        ak_hist = ak.stock_hk_index_daily_sina(symbol="HSTECH")
+                    elif name == 'HangSeng_Tech': 
+                        try:
+                            ak_hist = ak.stock_hk_index_daily_sina(symbol="HSTECH")
+                        except: pass
+                    elif 'Nasdaq' in name:
+                        try:
+                            ak_hist = ak.index_us_stock_sina(symbol=".IXIC")
+                        except: pass
+                    elif 'SP500' in name:
+                        try:
+                            ak_hist = ak.index_us_stock_sina(symbol=".INX")
+                        except: pass
+                    elif 'Gold' in name:
+                        try:
+                            # 黄金ETF作为近似替代
+                            ak_hist = ak.fund_etf_hist_sina(symbol="sz159937")
+                        except: pass
                     
                     if ak_hist is not None and not ak_hist.empty:
-                        # 统一列名
-                        ak_hist.rename(columns={'close': 'Close'}, inplace=True)
+                        cols = [c.lower() for c in ak_hist.columns]
+                        ak_hist.columns = cols
+                        if 'close' in cols:
+                            ak_hist.rename(columns={'close': 'Close'}, inplace=True)
+                        elif '收盘' in cols:
+                            ak_hist.rename(columns={'收盘': 'Close'}, inplace=True)
+                            
                         trend_result = self._calculate_trend(ak_hist)
-                        print(f"    ℹ️ {name} 使用 AKShare 数据修复成功")
-                except:
+                        if trend_result not in ["N/A", "Data Insufficient"]:
+                            print(f"      ℹ️ {name} 使用 AKShare 数据修复成功")
+                except Exception as e:
                     pass
             
             trends[name] = trend_result
@@ -137,13 +178,16 @@ class MacroAnalyzer:
     def _calculate_trend(self, hist_df) -> str:
         """计算趋势的辅助函数"""
         try:
-            # 确保按日期排序
             if 'date' in hist_df.columns:
+                hist_df['date'] = pd.to_datetime(hist_df['date'])
                 hist_df.set_index('date', inplace=True)
+                hist_df.sort_index(inplace=True)
             
-            # 确保列名正确 (AkShare返回可能是小写)
             close_col = 'Close' if 'Close' in hist_df.columns else 'close'
             if close_col not in hist_df.columns: return "N/A"
+
+            if len(hist_df) < 60:
+                return "Data Insufficient"
 
             ma20 = hist_df[close_col].rolling(20).mean().iloc[-1]
             ma60 = hist_df[close_col].rolling(60).mean().iloc[-1]

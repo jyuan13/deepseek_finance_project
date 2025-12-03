@@ -1,4 +1,4 @@
-# deepseek_finance_project_V2/financial_brain.py
+# deepseek_finance_project_V3/financial_brain.py
 
 import chromadb
 from chromadb.utils import embedding_functions
