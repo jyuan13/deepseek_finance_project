@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DeepSeek Finance Project V3.0-04 (Investment Committee) - 主程序入口
+DeepSeek Finance Project V3.0-06 (Investment Committee) - 主程序入口
 """
 
 import os
@@ -20,7 +20,7 @@ from email_sender import EmailSender
 from data_manager import DataManager
 
 # --- 版本控制 ---
-SYSTEM_VERSION = "V3.0-04"
+SYSTEM_VERSION = "V3.0-06"
 BUILD_DATE = "2025-05-23"
 
 def print_banner():
