@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DeepSeek Finance Project V3.0-06 (Investment Committee) - 主程序入口
+DeepSeek Finance Project V3.0-07 
 """
 
 import os
@@ -18,15 +18,16 @@ from operation_logger import OperationLogger
 from finance_analyzer import FinancialAnalyzer
 from email_sender import EmailSender
 from data_manager import DataManager
+from api_tester import APITester  # [V3.26 新增]
 
 # --- 版本控制 ---
-SYSTEM_VERSION = "V3.0-06"
-BUILD_DATE = "2025-05-23"
+SYSTEM_VERSION = "V3.0-07"
+BUILD_DATE = "2025-12-04"
 
 def print_banner():
     print("=" * 60)
-    print(f"    DeepSeek Finance Project {SYSTEM_VERSION} (Internal Build)")
-    print(f"    Architecture: Multi-Agent Committee (Macro/News/CIO)")
+    print(f"    DeepSeek Finance Project {SYSTEM_VERSION} (Local First)")
+    print(f"    Architecture: Offline-First / Manual-Update Workflow")
     print(f"    Build Date: {BUILD_DATE}")
     print("=" * 60)
 
@@ -36,7 +37,7 @@ def auto_update_libs():
     防止因数据源接口变更导致获取失败
     """
     target_libs = ["akshare", "baostock"]
-    print("\n🔄 正在检查并更新核心数据源库 (AkShare/Baostock)...")
+    print("\n🔄 正在自检核心数据源库 (AkShare/Baostock)...")
     print("   (使用 pypi.org 简易源，如果网络不通请手动更新)")
     
     for lib in target_libs:
@@ -50,13 +51,11 @@ def auto_update_libs():
             ]
             
             # 使用 subprocess 调用，静默输出，仅在报错时提示
-            # stdout=subprocess.DEVNULL 可以隐藏正常输出，让启动界面更清爽
             subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            # print(f"   ✅ {lib} 检查完毕")
         except Exception as e:
             print(f"   ⚠️ {lib} 自动更新失败: {e} (可忽略，继续运行)")
     
-    print("   ✅ 依赖库检查完毕")
+    print("   ✅ 依赖库自检完毕")
 
 def build_gui_tool():
     print("\n🔨 正在构建持仓配置工具 (EXE)...")
@@ -108,6 +107,30 @@ def build_gui_tool():
             
     except Exception as e:
         print(f"❌ 发生异常: {e}")
+
+def run_batch_update(fdm, pm):
+    """[V3.25] 批量更新本地持仓数据"""
+    print("\n🔄 [维护模式] 开始更新本地持仓数据库...")
+    print("⚠️  注意: 此操作会联网下载所有持仓基金的最新季度持仓，可能耗时较长。")
+    confirm = input("确认开始更新吗? (y/n): ").strip().lower()
+    if confirm != 'y': return
+
+    positions = pm.get_current_positions()
+    if not positions:
+        print("❌ 无持仓配置")
+        return
+
+    total = len(positions)
+    print(f"\n📋 共有 {total} 只标的待更新...")
+    
+    for i, pos in enumerate(positions):
+        code = pos['symbol']
+        print(f"   [{i+1}/{total}] 正在更新 {code} ...")
+        # 强制 force_update=True，触发联网下载并覆盖本地 CSV
+        fdm.update_fund_holdings(code, force_update=True)
+        
+    print(f"\n✅ 全部 {total} 只标的更新完毕！")
+    print("   现在运行 '1. 持仓分析' 将直接读取本地数据，速度极快且无须联网。")
 
 def main():
     # [V3.13] 启动前先检查更新
@@ -172,6 +195,7 @@ def main():
         pm = PortfolioManager()
         logger = OperationLogger()
         email_sender = EmailSender()
+        tester = APITester() # [V3.26] 初始化接口测试器
     except Exception as e:
         print(f"❌ 业务层初始化失败: {e}")
         return
@@ -188,12 +212,15 @@ def main():
 
     while True:
         print("\n" + "="*30 + f" 主菜单 ({SYSTEM_VERSION}) " + "="*30)
-        print("1. 🚀 智能金融分析 (委员会模式)")
+        print("1. 🚀 智能金融分析 (读取本地持仓)")
         print("2. 💼 投资组合管理")
         print("3. 📝 记录交易操作")
         print("4. 🧠 RAG 知识库管理")
-        print("5. 📧 邮件通知配置")
+        print("5. 🐞 分步调试模式")
         print("6. 🛠️ 构建持仓配置工具 (EXE)")
+        print("-" * 66)
+        print("7. 🔄 更新持仓数据 (维护模式 - 联网下载)")
+        print("8. 🔌 接口连通性测试")
         print("-" * 66)
         print("99. 🧹 系统重置")
         print("0.  退出")
@@ -205,8 +232,10 @@ def main():
         elif choice == "2": pm.manage_portfolio()
         elif choice == "3": logger.quick_log_operation()
         elif choice == "4": analyzer.manage_rag_system()
-        elif choice == "5": email_sender.setup_email_config()
+        elif choice == "5": analyzer._run_step_debug_mode()
         elif choice == "6": build_gui_tool()
+        elif choice == "7": run_batch_update(fdm, pm)
+        elif choice == "8": tester.run_menu() # [V3.26] 调用测试菜单
         elif choice == "99": analyzer.perform_system_reset()
         elif choice == "0":
             print("👋 再见！")

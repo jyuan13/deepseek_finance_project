@@ -1,88 +1,144 @@
-# 🚀 DeepSeek Finance Project V3
-**版本**: V3.1-01 (Stable Build)
-**定位**: 面向场外基金投资者的“私人 AI 首席投资官 (CIO)”
-**核心架构**: 投资委员会 (Investment Committee) + 影子净值 (Shadow NAV) + Kronos 时序预测 + 多源双轨数据
+<div align="center">
+  <img src="https://img.shields.io/badge/Python-3.10+-blue.svg" alt="Python">
+  <img src="https://img.shields.io/badge/AI-DeepSeek%20%7C%20Qwen-green.svg" alt="AI Models">
+  <img src="https://img.shields.io/badge/Finance-AkShare%20%7C%20YFinance-orange.svg" alt="Data Sources">
+  <img src="https://img.shields.io/badge/License-MIT-red.svg" alt="License">
+</div>
+
+# 🚀 DeepSeek Finance Project V3 (DSFP)
+
+**DSFP V3** 是一个本地优先（Local-First）、高度模块化的智能金融分析系统。它结合了传统金融工程方法（如 RBSA、影子净值估算）与前沿的 AI 技术（DeepSeek LLM、RAG、Kronos 时序预测），旨在为个人投资者提供机构级的投资组合管理、风险监控和决策支持。
+
+> **核心理念**：数据私有化、分析透明化、决策智能化。
 
 ---
 
-## 📖 项目简介 (Introduction)
+## 📚 目录
 
-**DeepSeek Finance Project V3** 是一个专为场外基金与全球资产配置打造的**“机构级”个人量化系统**。
-
-本项目不仅仅是一个数据面板，而是一个由 **CIO (DeepSeek/Qwen)**、**风控官 (RiskGuard)**、**量化研究员 (Kronos)** 和 **数据分析师 (Shadow Engine)** 组成的**虚拟投资委员会**。系统旨在解决个人投资者面临的三大痛点：
-
-1.  **盲盒交易**：场外基金净值滞后，通过**Shadow NAV**实现盘中（14:30）精准决策。
-2.  **数据孤岛**：整合 **AkShare、YFinance、Baostock** 等多源数据，打破单一接口限制。
-3.  **幻觉风险**：多重风控 (Risk Guard) + RAG 记忆库，防止 AI “一本正经地胡说八道”。
-
----
-
-## 🏗️ 系统架构与数据流 (System Architecture)
-
-### 1. 全域感知层 (Multi-Source Data Layer)
-* **双轨制 (Dual-Track)**: 核心数据均配备**主备接口**，自动降级，拒绝崩溃。
-    * **A股/港股**: AkShare (主) + Baostock (备)。
-    * **美股/宏观**: YFinance (实时) + AkShare (历史/备选)。
-* **港股穿透**: 独创的 **ETF Mapping** 技术，穿透 QDII 联接基金，直连目标 ETF 实时行情 (00700, 09988 等)。
-* **舆情监控**: 聚合新闻联播、财联社电报及 DuckDuckGo 搜索结果。
-
-### 2. 硬核计算层 (Quant Engines)
-* **🔮 影子净值引擎 (Shadow NAV)**:
-    * **毫秒级快照**: 使用 `_hk_cache` 缓存技术，并发扫描 50+ 重仓股，计算 T+0 盘中涨跌幅。
-    * **动态权重**: 自动清洗持仓数据，智能处理百分比格式，确保计算零误差。
-* **🤖 Kronos 时序预测**:
-    * **Transformer 模型**: 本地加载深度学习模型，预测纳斯达克/沪深300 的 T+1 走势。
-    * **Realtime Injection**: 强制注入今日实时 K 线，消除预测滞后。
-* **🛡️ 动态风控卫士**: 根据资产类型（股票/债券/混合）加载不同的止损与回撤阈值。
-
-### 3. 双脑决策层 (Dual-Brain Decision)
-* **AI 切换**: 支持 **DeepSeek** (深度推理) 和 **Qwen** (阿里百炼) 无缝切换。
-* **Step Debugger**: 内置分步调试器，可单步执行“基础信息”、“影子净值”、“舆情”、“技术面”、“风控”等环节，透明化决策过程。
+- [核心功能](#-核心功能)
+- [项目结构与文件说明](#-项目结构与文件说明)
+- [快速开始](#-快速开始)
+  - [环境准备](#1-环境准备)
+  - [API 配置](#2-api-配置环境变量)
+  - [运行项目](#3-运行项目)
+- [后续开发计划 (Roadmap)](#-后续开发计划-roadmap)
+- [免责声明](#-免责声明)
 
 ---
 
-## 📅 更新日志 (Changelog)
+## ✨ 核心功能
 
-### V3.1-01 (2025-12-03) - 重大更新
-* **[修复] Shadow NAV 0% 问题**:
-    * 新增 `_hk_cache` 港股全市场缓存，解决 50+ 只港股并发请求导致的超时封锁。
-    * 新增 `etf_mapping`，完美支持 QDII 联接基金穿透。
-    * 增加 `to_numeric` 强制类型转换，修复权重百分比字符串导致的计算错误。
-* **[修复] Kronos 模型崩溃**:
-    * 修复 Pandas `DatetimeIndex` 与 `Series` 的兼容性 Bug (`.dt` 属性错误)。
-* **[新增] 分步调试模式 (Step Debugger)**:
-    * 在主菜单新增 `5. 🐞 分步调试模式`，支持对任意基金的分析流程进行断点调试。
-* **[新增] 宏观数据双轨制**:
-    * 当 YFinance 提示 `Data Insufficient` 时，自动切换至 AkShare 新浪源，确保宏观数据 100% 可用。
-* **[优化] 启动自检**:
-    * 程序启动时自动检查并更新 `akshare` 和 `baostock` 库，防止接口过期。
+### 1. 🔮 深度基金透视
+- **影子净值 (Shadow NAV)**：不依赖滞后的官方净值，通过穿透持仓（支持港股/美股/A股）实时计算基金的估算净值。
+- **RBSA (基于收益的风格分析)**：自动分析基金的历史收益序列，识别其真实的资产配置风格。
+- **多轨行情数据**：集成 `AkShare` (A股/港股) 和 `YFinance` (美股/全球)，并具备自动熔断和降级机制，确保数据高可用。
 
----
+### 2. 🧠 智能 AI 分析师
+- **Kronos 预测引擎**：基于 Transformer 的轻量级时序模型，对纳指、标普、黄金等 7 大核心资产进行 T+N 趋势预测。
+- **Financial Brain (RAG)**：基于 `ChromaDB` 的检索增强生成系统，能够根据本地研报库和历史经验提供有依据的分析。
+- **自动 Prompt 构建**：根据宏观环境、技术指标和舆情动态，动态生成高质量的 LLM 提示词。
 
-## 🗺️ 后续计划 (Roadmap)
+### 3. 🛡️ 风险与策略
+- **Risk Guard (风控卫士)**：在生成建议前进行硬性风控审查（止损线、最大回撤、单一资产限额）。
+- **策略进化引擎**：记录每一次决策的胜率，通过反馈循环优化后续的分析策略。
 
-### 1. 功能完整性检查 (Integrity Check)
-全面复查以下模块的边界情况与异常处理：
-* 🔮 **持仓 & 影子净值**: 验证极端市场（如熔断、停牌）下的估值准确性。
-* 📰 **舆情数据**: 优化新闻清洗逻辑，去除无关的个股通稿。
-* 📈 **技术指标**: 引入更多因子（如 RSI, MACD, Bollinger Bands）。
-* 🛡️ **风控检查**: 增加基于波动率 (ATR) 的动态止损。
-* 🧠 **提示词生成**: 优化 Prompt 结构，减少 Token 消耗并提升指令依从性。
-
-### 2. 多源数据融合 (Multi-Source Fusion)
-进一步接入并深度集成以下 API，实现数据的交叉验证：
-* **Baostock**: 作为 A 股历史数据的强力备份。
-* **DuckDuckGo**: 增强海外标的（美股/QDII）的实时新闻搜索。
-* **Finnhub / AlphaVantage / FMP**: 引入美股基本面数据（EPS、PE、财报日期），为价值投资提供依据。
-
-### 3. 多角色 AI 委员会 (AI Agent Committee)
-重构决策流程，将单一 LLM 拆解为多个独立 Agent，在每个处理环节介入审查：
-* **🕵️ 数据清洗员 (Data Analyst Agent)**: 在 Step 1 & 2 介入，检查持仓数据是否异常（如权重之和 != 100%）。
-* **⚖️ 舆情风控官 (Sentiment Officer Agent)**: 在 Step 3 介入，专门阅读新闻，给出 -10 到 +10 的情绪打分。
-* **🛡️ 合规审查员 (Compliance Agent)**: 在 Step 5 介入，强制执行“铁律”（如：亏损超 10% 必须止损），拥有一票否决权。
-* **👑 首席投资官 (CIO Agent)**: 仅在 Step 6 介入，综合上述所有 Agent 的报告做最终拍板。
+### 4. 📰 全球舆情聚合
+- 集成 `Finnhub`、`AlphaVantage`、`DuckDuckGo` 和 `AkShare` 新闻源，提供多维度的市场情绪分析。
 
 ---
 
-## ⚠️ 免责声明
-本项目仅供技术研究与学习使用，不构成任何投资建议。金融市场有风险，模型预测仅供参考，请根据自身风险承受能力独立决策。
+## 📂 项目结构与文件说明
+
+本项目采用模块化设计，主要文件作用如下：
+
+### 核心入口与调度
+- `main.py`: **主程序入口**。提供 CLI 交互菜单，调度各子模块。
+- `finance_analyzer.py`: **分析总线**。协调数据、模型、风控和 LLM，生成最终投资报告。
+
+### 数据层 (Data Layer)
+- `data_provider.py`: **数据获取核心**。封装了 AkShare、YFinance、DDGS 等接口，实现了多源降级和重试机制。
+- `fund_data_manager.py`: **基金数据管家**。负责基金净值、持仓数据的缓存与读取。
+- `data_manager.py`: **数据库接口**。管理 SQLite 数据库 (`financial_data_v3.db`) 的读写。
+- `macro_analyzer.py`: **宏观分析器**。扫描全球主要指数趋势、美债利率及流动性指标。
+
+### 分析引擎 (Analysis Engines)
+- `shadow_engine.py`: **影子净值引擎**。核心算法之一，实时估算ETF或基金的盘中净值。
+- `technical_engine.py`: **技术分析引擎**。计算 MA、RSI、MACD 等技术指标。
+- `rbsa_engine.py`: **风格分析引擎**。进行回归分析以确定基金风格。
+- `sentiment_engine.py`: **舆情引擎**。清洗和评分新闻数据。
+- `risk_guard.py`: **风控模块**。执行交易前的硬性规则检查。
+- `strategy_evolution.py`: **策略进化**。基于历史胜率调整分析参数。
+
+### AI 与 LLM
+- `deepseek_client.py`: **LLM 客户端**。适配 DeepSeek 和 OpenAI 格式的 API 调用。
+- `kronos_adapter.py`: **时序预测适配器**。加载本地 Kronos 模型进行趋势预测。
+- `financial_brain.py`: **RAG 核心**。管理向量数据库，处理研报和知识检索。
+- `prompt_builder.py`: **提示词工厂**。组装上下文生成结构化 Prompt。
+
+### 工具与配置
+- `portfolio_manager.py`: **持仓管理**。读取和更新 `my_portfolio.json`。
+- `operation_logger.py`: **操作日志**。记录系统运行状态和交易建议。
+- `email_sender.py`: **通知模块**。支持发送 HTML 格式的日报邮件。
+- `requirements.txt`: 项目依赖列表。
+
+---
+
+## 🚀 快速开始
+
+### 1. 🐍 环境准备
+
+确保您的 Python 版本 **>= 3.10**。
+
+```bash
+# 1. 克隆项目
+git clone [https://github.com/yourusername/deepseek_finance_project_V3.git](https://github.com/yourusername/deepseek_finance_project_V3.git)
+
+# 2. 进入目录
+cd deepseek_finance_project_V3
+
+# 3. 安装依赖
+pip install -r requirements.txt
+
+
+2. API 配置 (环境变量)
+DeepSeek_API_Key = "sk-xxxxxxxx"
+Finnhub_API_Key = "xxxxxxxx"       # 可选，用于美股舆情
+Alpha_Vantage_API_Key = "xxxxxxxx" # 可选
+FMP_API_Key = "xxxxxxxx"           # 可选
+
+3. 运行项目
+配置持仓：在根目录下创建或编辑 my_portfolio.json 文件（参考示例格式），填入您关注的基金或股票代码。
+
+启动程序：
+
+Bash
+
+python main.py
+选择功能：在菜单中选择 1. 智能金融分析 生成日报，或 5. 分步调试模式 查看详细分析过程。
+
+## 🗺️ 后续开发计划 (Roadmap)
+
+我们致力于将 **DSFP** 打造成一个多 Agent 协作的智能投研平台，未来的演进路线如下：
+
+### 📡 1. 集成 TrendRadar (情报雷达)
+> 增强市场感知能力，从被动分析转向主动捕捉。
+- **多源信息监控**：引入 TrendRadar 架构，整合社交媒体与传统财经流。
+- **实时推送与摘要**：实现全天候财经新闻自动抓取、清洗与 LLM 摘要。
+- **事件驱动信号**：建立基于特定关键词（如“加息”、“重组”）的交易信号触发机制。
+
+### 🤖 2. 多 Agent 分析师架构 (Multi-Agent System)
+> 让专业的人做专业的事，模拟真实的投研团队协作。
+- **📊 数据分析师 Agent**：专注量化数据清洗、技术指标计算与个股基本面挖掘。
+- **🌍 宏观策略师 Agent**：专注全球流动性分析、央行政策解读与大类资产配置建议。
+- **⚖️ 交易执行官 Agent**：综合各方意见，负责具体的买卖点位计算与定投计划制定。
+
+### 🔍 3. 执行期实时审核 (Real-time Auditing)
+> 引入“对抗性”思维，降低 AI 幻觉风险。
+- **引入 "审核师 (Auditor)" 角色**：改变仅在最终阶段介入的模式，实现全流程监管。
+- **实时事实校验 (Fact-Checking)**：在数据获取、清洗、分析的每一步骤进行数据源比对。
+- **逻辑对抗审查**：专门针对 AI 生成的决策逻辑进行反向测试，确保严密性。
+
+### 🖥️ 4. 客户端与工程化
+> 提升用户体验，降低部署门槛。
+- **GUI 升级**：完善 `portfolio_gui.py`，提供更现代、交互更友好的图形界面。
+- **跨平台打包**：利用 PyInstaller/Nuitka 将项目打包为独立可执行文件 (`.exe` / `.app`)，实现开箱即用。

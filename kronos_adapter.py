@@ -13,7 +13,6 @@ if current_dir not in sys.path:
     sys.path.append(current_dir)
 
 # 尝试导入 Kronos 模型
-# 这里的 import 依赖于您已将 'model' 文件夹复制到项目根目录
 try:
     from model import Kronos, KronosTokenizer, KronosPredictor
     print("✅ 成功导入本地 Kronos 模型库")
@@ -26,8 +25,11 @@ except ImportError as e:
 
 class KronosAdapter:
     """
-    [V3.0-02] Kronos 预测适配器
+    [V3.0-11] Kronos 预测适配器 (NaN Proof Edition)
     职责: 加载预训练模型 -> 预处理 K 线 -> 生成未来趋势预测
+    更新: 
+    1. 实施焦土式数据清洗，确保 Volume 列绝对无 NaN。
+    2. 增加最终防线，防止模型推理因数据问题崩溃。
     """
     
     def __init__(self, model_size="small", device=None):
@@ -44,9 +46,6 @@ class KronosAdapter:
         print(f"🔧 初始化 Kronos ({model_size}) on {self.device}...")
         
         try:
-            # 自动从 HuggingFace 下载权重
-            # NeoQuasar/Kronos-small (24M params) 适合个人电脑
-            # NeoQuasar/Kronos-base (102M params) 效果更好但更慢
             repo_name = f"NeoQuasar/Kronos-{model_size}"
             tokenizer_repo = "NeoQuasar/Kronos-Tokenizer-base"
             
@@ -57,8 +56,6 @@ class KronosAdapter:
             self.model = Kronos.from_pretrained(repo_name)
             self.model.to(self.device)
             
-            # 实例化预测器
-            # max_context=512 是 small/base 模型的限制
             self.predictor = KronosPredictor(self.model, self.tokenizer, device=self.device, max_context=512)
             print("   ✅ Kronos 加载完成")
             
@@ -66,54 +63,73 @@ class KronosAdapter:
             print(f"   ❌ Kronos 加载失败: {e}")
             self.is_active = False
 
-    def predict_trend(self, df_kline: pd.DataFrame, pred_len=24):
+    def predict_trend(self, df_kline: pd.DataFrame, pred_len=5, debug=False):
         """
         预测未来趋势
-        :param df_kline: 包含 open, high, low, close, volume 的 DataFrame (标准格式)
-        :param pred_len: 预测未来多少个周期 (如日线就是未来24天，分钟线就是24分钟)
-        :return: (trend_desc, confidence_score, forecast_df)
         """
         if not self.is_active or df_kline.empty:
             return "模型未就绪", 0.0, None
             
         try:
             # 1. 数据格式适配
-            # Kronos 需要: open, high, low, close (volume 可选)
-            # 确保列名小写
             df = df_kline.copy()
             df.columns = [c.lower() for c in df.columns]
             
-            # 确保有必要的列
             required = ['open', 'high', 'low', 'close']
             if not all(c in df.columns for c in required):
                 return "数据列缺失", 0.0, None
                 
-            # 确保有 timestamps 列 (KronosPredictor 需要)
             if 'date' in df.columns:
                 df['timestamps'] = pd.to_datetime(df['date'])
             else:
-                # 如果没有时间列，生成伪时间
                 df['timestamps'] = pd.date_range(start="2020-01-01", periods=len(df), freq="D")
 
-            # 2. 截取上下文
-            # Kronos 最大上下文 512，我们取最近 400 条作为输入
+            # 2. 截取上下文 (最大 512，取最近 400)
             lookback = min(len(df), 400)
             if lookback < 50:
                 return "历史数据不足", 0.0, None
                 
-            # 切片：取最后 lookback 条作为 Input
-            # 实际上 KronosPredictor 的用法需要构造 x_df, x_timestamp, y_timestamp
-            
-            # 准备 Input Data
             x_df = df.iloc[-lookback:].reset_index(drop=True)
             x_timestamp = x_df['timestamps']
+
+            # [Fix Ultimate] 焦土式清洗
             
-            # 准备 Output Timestamp (未来的时间点)
+            # A. 确保 Volume 存在且无 NaN/Inf
+            if 'volume' not in x_df.columns:
+                x_df['volume'] = 0.0
+            
+            x_df['volume'] = pd.to_numeric(x_df['volume'], errors='coerce')
+            x_df['volume'] = x_df['volume'].fillna(0)
+            x_df['volume'] = x_df['volume'].replace([np.inf, -np.inf], 0)
+
+            # B. 清洗价格列 (Open/High/Low/Close)
+            for col in ['open', 'high', 'low', 'close']:
+                x_df[col] = pd.to_numeric(x_df[col], errors='coerce')
+                # 价格不应为0或Inf，视为缺失
+                x_df[col] = x_df[col].replace([np.inf, -np.inf, 0], np.nan)
+                # 前向填充 + 后向填充
+                x_df[col] = x_df[col].ffill().bfill()
+            
+            # C. 最终行级清洗 (如果某行价格全空，丢弃)
+            x_df = x_df.dropna(subset=['open', 'high', 'low', 'close'])
+            
+            # D. 最后一道防线：如果仍有遗漏的 NaN (理论上不应有)，强制填0，防止报错
+            if x_df.isnull().values.any():
+                x_df = x_df.fillna(0)
+
+            if x_df.empty or len(x_df) < 10:
+                return "数据无效(清洗后过短)", 0.0, None
+
+            if debug:
+                print(f"\n🐛 [Kronos Debug] 输入数据概览 (Context Len: {len(x_df)}):")
+                print("   Input Tail (Last 5 rows):")
+                print(x_df[['date', 'open', 'close', 'high', 'low']].tail(5).to_string(index=False))
+                print("-" * 50)
+            
             last_time = x_timestamp.iloc[-1]
             y_timestamp = pd.date_range(start=last_time + pd.Timedelta(days=1), periods=pred_len, freq="D")
             
-            # 3. 执行推理 (Inference)
-            # sample_count=1 (确定性预测), T=0.8 (降低随机性)
+            # 3. 执行推理
             pred_df = self.predictor.predict(
                 df=x_df,
                 x_timestamp=x_timestamp,
@@ -125,25 +141,42 @@ class KronosAdapter:
                 verbose=False
             )
             
-            # 4. 解析结果
-            # pred_df 包含预测的 OHLCV
-            # 我们计算简单的趋势：预测期末收盘价 vs 当前收盘价
+            # 4. 核心计算 (T+1 Logic)
             current_close = x_df.iloc[-1]['close']
-            pred_close_avg = pred_df['close'].mean() # 预测期的平均收盘价
-            pred_close_final = pred_df['close'].iloc[-1] # 预测期末的收盘价
             
-            chg_pct = ((pred_close_final - current_close) / current_close) * 100
+            pred_df['date'] = y_timestamp
+            pred_df['cum_pct_chg'] = ((pred_df['close'] - current_close) / current_close) * 100
+            
+            target_close = pred_df['close'].iloc[0] 
+            pred_close_avg = pred_df['close'].mean()
+            
+            chg_pct = ((target_close - current_close) / current_close) * 100
             
             trend = "震荡"
-            if chg_pct > 2.0: trend = "看涨 (Bullish)"
-            elif chg_pct < -2.0: trend = "看跌 (Bearish)"
+            if chg_pct > 1.0: trend = "看涨 (Bullish)"  
+            elif chg_pct < -1.0: trend = "看跌 (Bearish)"
             
-            # 简单的置信度 (基于波动率)
-            volatility = pred_df['close'].std() / pred_close_avg
-            confidence = max(0.1, 1.0 - volatility*5) # 波动越大置信度越低
+            # 5. 置信度计算
+            if len(pred_df) > 1:
+                pred_std = pred_df['close'].std()
+                volatility = pred_std / pred_close_avg
+            else:
+                pred_std = 0.0
+                volatility = 0.0
+            
+            raw_confidence = 1.0 - volatility * 5
+            confidence = max(0.1, min(0.95, raw_confidence))
+            
+            if debug:
+                print(f"🐛 [Kronos Debug] 预测序列 (Pred Len: {len(pred_df)}):")
+                print(pred_df[['date', 'close', 'cum_pct_chg']].to_string())
+                print(f"   Target(T+1): {target_close:.2f} (Base: {current_close:.2f})")
+                print(f"   Stats: Mean={pred_close_avg:.2f}, Std={pred_std:.4f}, Volatility={volatility:.4f}")
+                print(f"   Calc: 1.0 - {volatility:.4f}*5 = {raw_confidence:.4f} -> Final Conf: {confidence}")
+                print("-" * 50)
             
             desc = f"{trend}, 预期涨幅 {chg_pct:.2f}%"
-            return desc, round(confidence, 2), pred_df
+            return desc, round(confidence, 2), pred_df[['date', 'close', 'cum_pct_chg']]
             
         except Exception as e:
             print(f"⚠️ Kronos 推理出错: {e}")
@@ -152,10 +185,8 @@ class KronosAdapter:
             return f"推理错误: {str(e)}", 0.0, None
 
 if __name__ == "__main__":
-    # 测试代码
     adapter = KronosAdapter(model_size="small")
     if adapter.is_active:
-        # 造一点假数据测试
         dates = pd.date_range(end=datetime.now(), periods=100)
         data = {
             'date': dates,
@@ -166,5 +197,5 @@ if __name__ == "__main__":
             'volume': np.random.rand(100) * 1000
         }
         df = pd.DataFrame(data)
-        res, conf, _ = adapter.predict_trend(df)
+        res, conf, pdf = adapter.predict_trend(df, pred_len=5, debug=True)
         print(f"预测结果: {res} (置信度: {conf})")

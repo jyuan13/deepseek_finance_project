@@ -4,6 +4,7 @@ import json
 import re
 import os
 import pandas as pd
+import numpy as np
 from datetime import datetime
 from shadow_engine import ShadowEngine
 from rbsa_engine import RBSAEngine
@@ -17,6 +18,19 @@ from financial_brain import FinancialBrainRAG
 from strategy_evolution import StrategyEvolutionEngine
 from kronos_adapter import KronosAdapter
 
+# [V3.50 Fix] 兼容 Numpy 2.0 的 JSON 编码器
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
+        return json.JSONEncoder.default(self, obj)
+
 class FinancialAnalyzer:
     def __init__(self, deepseek_client, fund_data_mgr, portfolio_manager, operation_logger):
         self.client = deepseek_client
@@ -24,12 +38,9 @@ class FinancialAnalyzer:
         self.pm = portfolio_manager
         self.logger = operation_logger
         
-        # --- 核心引擎 ---
         self.rbsa = RBSAEngine(self.fdm.db)
         self.shadow = ShadowEngine(self.fdm, self.rbsa)
         self.guard = RiskGuard()
-        
-        # --- 辅助组件 ---
         self.tech_engine = TechnicalEngine()
         self.macro_analyzer = MacroAnalyzer()
         self.sentiment_engine = SentimentEngine()
@@ -38,18 +49,36 @@ class FinancialAnalyzer:
         self.prompt_builder = PromptBuilder(self.sentiment_engine, self.rag_engine)
         
         self._kronos_instance = None
-        self.indices_config = {'Nasdaq_Future': 'NQ=F', 'SP500_Future': 'ES=F', 'China_A50': 'CN=F', 'Gold': 'GC=F'}
-        self.kronos_targets = {"US": "^IXIC", "CN": "000300.SS"}
+        
+        # [V3.26] 扩展宏观监测名单 (7大核心指数)
+        self.indices_config = {
+            'Nasdaq': '^IXIC', 
+            'SP500': '^GSPC', 
+            'Shanghai': '000001.SS', 
+            'CSI300': '000300.SS',
+            'HangSeng': '^HSI',
+            'HSTech': '^HSTECH',
+            'Nikkei225': '^N225',
+            'Gold': 'GC=F'
+        }
+        
+        # Kronos 预测目标配置 (对应上述指数)
+        self.kronos_targets = [
+            {"name": "Nasdaq (US)", "symbol": "^IXIC", "market": "US"},
+            {"name": "S&P 500 (US)", "symbol": "^GSPC", "market": "US"},
+            {"name": "Shanghai (CN)", "symbol": "000001.SS", "market": "A"},
+            {"name": "CSI 300 (CN)", "symbol": "000300.SS", "market": "A"},
+            {"name": "Hang Seng (HK)", "symbol": "^HSI", "market": "Global"},
+            {"name": "HS Tech (HK)", "symbol": "^HSTECH", "market": "Global"},
+            {"name": "Nikkei 225 (JP)", "symbol": "^N225", "market": "Global"}
+        ]
 
     @property
     def kronos(self):
         if self._kronos_instance is None:
-            print("💤 正在唤醒 Kronos 预测引擎...")
             try:
                 self._kronos_instance = KronosAdapter(model_size="small")
-            except Exception as e:
-                print(f"❌ Kronos 初始化失败: {e}")
-                self._kronos_instance = None
+            except Exception: self._kronos_instance = None
         return self._kronos_instance
 
     def run_analysis_menu(self):
@@ -84,7 +113,6 @@ class FinancialAnalyzer:
         return input("是否开启调试模式? (y/n): ").lower() == 'y'
 
     def _run_step_debug_mode(self):
-        """[新增] 分步调试模式，用于排查每一步的数据获取问题"""
         print("\n🐞 进入分步调试模式")
         print("此模式将把分析流程拆解，执行完选定步骤后立即暂停并打印全部数据。")
         code = input("请输入要调试的基金代码 (如 013403): ").strip()
@@ -106,68 +134,74 @@ class FinancialAnalyzer:
         print("\n✅ 调试结束，流程已中断。")
 
     def _scan_macro_environment(self, predict=False, debug=False):
-        print("🌍 正在扫描宏观环境 (期货实时数据)...")
+        print("🌍 正在扫描宏观环境 (读取本地缓存/联网)...")
         macro_data = {}
         try:
+            # 1. 基础趋势 (YFinance/AkShare)
             macro_data = self.macro_analyzer.analyze_indices_trend(self.indices_config)
             
-            if debug:
-                print(f"\n🐛 [DEBUG] 原始期货数据: {macro_data}")
-                if not macro_data:
-                    print("⚠️ [DEBUG] 警告: 未获取到任何期货数据，请检查网络或 YFinance 接口。")
-
+            if debug: print(f"\n🐛 [DEBUG] 宏观数据: {macro_data}")
+            
             macro_liquidity = self.macro_analyzer.analyze_macro_liquidity()
-            if debug:
-                 print(f"🐛 [DEBUG] 宏观流动性指标: {macro_liquidity}")
 
             print("\n📊 宏观数据概览:")
-            print(json.dumps(macro_data, indent=2, ensure_ascii=False))
+            for k, v in macro_data.items():
+                print(f"  - {k:<15}: {v}")
             
+            # 2. Kronos 全球预测
             if predict and self.kronos and self.kronos.is_active:
-                print("\n🤖 正在调用 Kronos 进行大盘趋势预测...")
-                target_code = self.kronos_targets["US"]
+                print(f"\n🤖 Kronos Global Forecast (Scanning {len(self.kronos_targets)} Indices)...")
                 
-                self.fdm.update_market_quotes([target_code])
-                df_hist = self.fdm.db.get_market_data(target_code)
+                macro_data['Kronos_Detail'] = []
+                macro_data['Kronos_Prediction'] = "See Detail Table"
                 
-                if debug:
-                    print(f"🐛 [DEBUG] Kronos 输入历史数据长度: {len(df_hist)}")
+                for target in self.kronos_targets:
+                    symbol = target['symbol']
+                    market = target['market']
+                    name = target['name']
+                    
+                    # 使用 DataProvider 获取历史 K 线 (自动缓存)
+                    df_hist = self.fdm.provider.fetch_history_kline(symbol, market=market)
+                    
                     if not df_hist.empty:
-                        print(f"🐛 [DEBUG] 历史数据最后一行:\n{df_hist.iloc[-1].to_dict()}")
-
-                snapshot, valid = self.fdm.get_realtime_snapshot(target_code)
-                if debug:
-                    print(f"🐛 [DEBUG] 实时快照 ({target_code}): {snapshot} (Valid: {valid})")
-                
-                if valid and not df_hist.empty:
-                    last_hist_date = pd.to_datetime(df_hist.iloc[-1]['date']).date()
-                    if datetime.now().date() > last_hist_date:
-                        print(f"   ⚡ [Realtime Injection] 拼接今日实时K线: {target_code} @ {snapshot['price']}")
-                        new_row = pd.DataFrame([{
-                            'date': datetime.now(), 'symbol': target_code,
-                            'open': snapshot.get('open', snapshot['price']), 
-                            'high': snapshot.get('high', snapshot['price']),
-                            'low': snapshot.get('low', snapshot['price']),
-                            'close': snapshot['price'], 'volume': snapshot.get('volume', 0),
-                            'source': 'snapshot'
-                        }])
-                        df_hist = pd.concat([df_hist, new_row], ignore_index=True)
-                
-                if df_hist.empty:
-                    print("⚠️ [DEBUG] 错误: 没有足够的历史数据供 Kronos 预测。")
-                else:
-                    pred_us, conf_us, _ = self.kronos.predict_trend(df_hist, pred_len=1)
-                    print(f"   🇺🇸 纳斯达克原生指数预测 (T+1): {pred_us} (置信度: {conf_us})")
-                    macro_data['Kronos_Prediction'] = f"Nasdaq(T+1): {pred_us}"
+                        # 尝试拼接今日实时快照 (减少滞后)
+                        snapshot, valid = self.fdm.get_realtime_snapshot(symbol)
+                        if valid and snapshot.get('price'):
+                            last_hist_date = pd.to_datetime(df_hist.iloc[-1]['date']).date()
+                            if datetime.now().date() > last_hist_date:
+                                new_row = pd.DataFrame([{
+                                    'date': datetime.now(), 
+                                    'open': snapshot.get('open', snapshot['price']), 
+                                    'high': snapshot.get('high', snapshot['price']),
+                                    'low': snapshot.get('low', snapshot['price']),
+                                    'close': snapshot['price'], 
+                                    'volume': 0
+                                }])
+                                df_hist = pd.concat([df_hist, new_row], ignore_index=True)
+                    
+                        # 执行预测
+                        pred_desc, conf, pred_df = self.kronos.predict_trend(df_hist, pred_len=5, debug=debug)
+                        
+                        print(f"   🔮 {name:<18} | T+1: {pred_desc} | Conf: {conf}")
+                        
+                        # 记录到数据结构中，供报告使用
+                        if pred_df is not None:
+                            t1_row = pred_df.iloc[0]
+                            macro_data['Kronos_Detail'].append({
+                                'name': name,
+                                'date': t1_row['date'].strftime('%m-%d'),
+                                'close': f"{t1_row['close']:.2f}",
+                                'chg': f"{t1_row['cum_pct_chg']:+.2f}%",
+                                'conf': conf
+                            })
 
             if macro_liquidity:
                 return {**macro_data, "US_10Y": macro_liquidity.get("us_10y")}
             return macro_data
         except Exception as e:
             print(f"⚠️ 宏观扫描失败: {e}")
-            if debug:
-                import traceback
-                traceback.print_exc()
+            import traceback
+            traceback.print_exc()
             return {}
 
     def _analyze_portfolio_funds(self):
@@ -219,89 +253,70 @@ class FinancialAnalyzer:
         """计算均线趋势"""
         try:
             df = self.fdm.get_fund_nav_history(fund_code, lookback_days=120)
-            
-            if debug:
-                print(f"🐛 [DEBUG] {fund_code} 净值历史数据行数: {len(df)}")
-            
-            if len(df) < 20: 
-                if debug: print(f"⚠️ [DEBUG] 数据不足 20 行，无法计算 MA20")
-                return "数据不足"
+            if len(df) < 20: return "数据不足"
             
             ma10 = df['nav'].rolling(window=10).mean().iloc[-1]
             ma20 = df['nav'].rolling(window=20).mean().iloc[-1]
             ma60 = df['nav'].rolling(window=60).mean().iloc[-1]
             current = df['nav'].iloc[-1]
             
-            if debug:
-                print(f"🐛 [DEBUG] MA 指标: Now={current:.3f}, MA10={ma10:.3f}, MA20={ma20:.3f}, MA60={ma60:.3f}")
-
             trend = "震荡"
             if current > ma20 and ma20 > ma60: trend = "多头排列 (Strong Up)"
             elif current < ma20 and ma20 < ma60: trend = "空头排列 (Strong Down)"
             elif current > ma20: trend = "短期反弹"
             
             return f"{trend} (MA20={ma20:.3f}, Now={current:.3f})"
-        except Exception as e:
-            if debug: print(f"🐛 [DEBUG] MA 计算发生异常: {e}")
-            return "计算失败"
+        except: return "计算失败"
 
     def _analyze_fund_trend(self, fund_code, user_cost, holding_qty, max_invest_limit, dca_amount, macro_context, debug=False, fund_comment="", batch_mode=False, stop_stage=None):
         if debug: print(f"\n{'='*20} 开始分析: {fund_code} {'='*20}")
         
         # --- Step 1: Info ---
+        if stop_stage: print(f"\n👉 步骤 1: 获取基础信息...")
         info = self.fdm.get_fund_basic_info(fund_code)
         if debug: print(f"🐛 [DEBUG] 基金基础信息 (Info): {info}")
         
-        if not info:
-            print(f"⚠️ 警告: 无法获取 {fund_code} 的基础信息，可能代码错误或数据源暂不可用。")
-            asset_type = 'unknown'
-            real_name = fund_code
-        else:
-            asset_type = info.get('type', 'stock') 
-            real_name = info.get('name', fund_code)
-            
+        asset_type = info.get('type', 'stock') 
+        real_name = info.get('name', fund_code)
         display_name = f"{real_name} ({fund_code})"
-        print(f"\n🔍 分析中: {display_name} {f'[{fund_comment}]' if fund_comment else ''} ...")
         
         if stop_stage == 1:
-            print(f"\n🛑 [DEBUG STOP] 步骤1: 基础信息获取完毕。\n{json.dumps(info, ensure_ascii=False, indent=2)}")
+            print(f"\n🛑 [DEBUG STOP] 步骤1 结束。\n{json.dumps(info, ensure_ascii=False, indent=2)}")
             return None
 
         # --- Step 2: Holdings & Shadow ---
+        if stop_stage: print(f"\n👉 步骤 2: 穿透持仓 & 计算影子净值...")
         holdings = self.fdm.get_top_holdings(fund_code)
         if debug:
             print(f"🐛 [DEBUG] 前十大持仓 (Top Holdings): {len(holdings)} 条")
-            for h in holdings[:10]: # Limit print to 10
+            for h in holdings[:10]: 
                 print(f"   - {h['stock_name']} ({h['stock_code']}): {h['weight']}%")
         
-        if not holdings:
-             print("⚠️ 警告: 未获取到持仓明细，Shadow NAV 估算可能不准确。")
-
         est_nav_chg, basis = self.shadow.calc_realtime_nav(fund_code, holdings)
-        print(f"   🔮 Shadow NAV: {est_nav_chg:+}%")
         if debug:
+            print(f"🐛 [DEBUG] Shadow NAV: {est_nav_chg}%")
             print(f"🐛 [DEBUG] Shadow NAV 计算说明: {basis}")
-            print(f"🐛 [DEBUG] 估算结果: {est_nav_chg}")
             
         if stop_stage == 2:
-            print(f"\n🛑 [DEBUG STOP] 步骤2: 影子净值计算完毕。\n结果: {est_nav_chg}%\n基准: {basis}")
+            print(f"\n🛑 [DEBUG STOP] 步骤2 结束。\n结果: {est_nav_chg}%\n基准: {basis}")
             return None
         
         # --- Step 3: News ---
+        if stop_stage: print(f"\n👉 步骤 3: 获取舆情数据...")
         news = self.fdm.get_aggregated_news(fund_code)
         if debug:
             print(f"🐛 [DEBUG] 聚合新闻条数: {len(news)}")
-            if news: print(f"   - 第一条: {news[0][:50]}...")
             
         if stop_stage == 3:
-            print(f"\n🛑 [DEBUG STOP] 步骤3: 舆情获取完毕。\n{json.dumps(news, ensure_ascii=False, indent=2)}")
+            print(f"\n🛑 [DEBUG STOP] 步骤3 结束。\n{json.dumps(news, ensure_ascii=False, indent=2)}")
             return None
         
         # --- Step 4: Technical ---
+        if stop_stage: print(f"\n👉 步骤 4: 计算技术指标...")
         ma_trend = self._calculate_ma_trend(fund_code, debug=debug)
         
         if stop_stage == 4:
-            print(f"\n🛑 [DEBUG STOP] 步骤4: 技术指标计算完毕。\n趋势: {ma_trend}")
+            print(f"\n🛑 [DEBUG STOP] 步骤4 结束。\n趋势: {ma_trend}")
             return None
         
         # --- Calc PNL ---
@@ -324,6 +339,7 @@ class FinancialAnalyzer:
                 pnl_desc = f"{holding_pnl_pct:.2f}% (仅今日浮动)"
         
         # --- Step 5: Risk ---
+        if stop_stage: print(f"\n👉 步骤 5: 风控审查...")
         risk_ctx = {
             "shadow_change": est_nav_chg, 
             "holding_pnl": holding_pnl_pct,
@@ -333,7 +349,7 @@ class FinancialAnalyzer:
         }
         
         if debug:
-            print(f"🐛 [DEBUG] 提交给 RiskGuard 的上下文: {json.dumps(risk_ctx, ensure_ascii=False)}")
+            print(f"🐛 [DEBUG] 提交给 RiskGuard 的上下文: {json.dumps(risk_ctx, ensure_ascii=False, cls=NumpyEncoder)}")
             
         is_safe, risk_msg = self.guard.check_risk("BUY", risk_ctx)
         
@@ -341,11 +357,14 @@ class FinancialAnalyzer:
              print(f"🐛 [DEBUG] 风控结论: Safe={is_safe}, Msg={risk_msg}")
              
         if stop_stage == 5:
-            print(f"\n🛑 [DEBUG STOP] 步骤5: 风控检查完毕。\n上下文: {risk_ctx}\n结论: {risk_msg}")
+            print(f"\n🛑 [DEBUG STOP] 步骤5 结束。\n上下文: {risk_ctx}\n结论: {risk_msg}")
             return None
 
         # --- Step 6: Prompt & LLM ---
-        macro_str = json.dumps(macro_context, ensure_ascii=False) if macro_context else "数据暂缺"
+        if stop_stage: print(f"\n👉 步骤 6: 生成 Prompt 并请求 AI...")
+        
+        # [Fix] 使用 NumpyEncoder 兼容 Numpy 2.0
+        macro_str = json.dumps(macro_context, ensure_ascii=False, cls=NumpyEncoder) if macro_context else "数据暂缺"
         limit_str = f"{max_invest_limit}元" if max_invest_limit > 0 else "无"
         
         kronos_signal = macro_context.get('Kronos_Prediction', '模型未就绪')
@@ -372,7 +391,7 @@ class FinancialAnalyzer:
 - 每日限额: {limit_str}
 - 定投基准: {dca_amount}元 (如果是定投策略)
 
-# AI 预测
+# AI 预测 (Global Macro)
 - Kronos: {kronos_signal}
 
 # 环境
@@ -398,7 +417,7 @@ class FinancialAnalyzer:
             print(f"\n🐞 [DEBUG] 发送给 LLM 的 Prompt:\n{'-'*40}\n{prompt}\n{'-'*40}")
             
         if stop_stage == 6:
-            print(f"\n🛑 [DEBUG STOP] 步骤6: Prompt生成完毕，流程中断。")
+            print(f"\n🛑 [DEBUG STOP] 步骤6 结束 (Prompt已打印)。")
             return None
         
         print("   🧠 正在生成决策...")
@@ -487,11 +506,41 @@ class FinancialAnalyzer:
         
         macro_html = ""
         if macro_data:
+            # 1. 基础宏观数据
             macro_items = ""
             for k, v in macro_data.items():
-                macro_items += f"<div style='display:inline-block; background:#dfe6e9; padding:8px 15px; margin:5px; border-radius:20px; font-size:14px;'><b>{k}:</b> {v}</div>"
+                if k != 'Kronos_Detail': # 跳过详情列表
+                    macro_items += f"<div style='display:inline-block; background:#dfe6e9; padding:8px 15px; margin:5px; border-radius:20px; font-size:14px;'><b>{k}:</b> {v}</div>"
             macro_html = f"<div style='margin-bottom:20px;'>{macro_items}</div>"
-        
+            
+            # 2. Kronos 趋势详情表 (新增)
+            if 'Kronos_Detail' in macro_data and macro_data['Kronos_Detail']:
+                kronos_table = """
+                <div style="margin-top: 15px; background: #f8f9fa; padding: 10px; border-radius: 8px; border-left: 4px solid #6c5ce7;">
+                    <h4 style="margin: 0 0 10px 0; color: #6c5ce7;">🤖 Kronos AI Forecast (Global T+1)</h4>
+                    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                        <tr style="background: #e1e4e8;">
+                            <th style="padding: 6px; text-align: left;">Index</th>
+                            <th style="padding: 6px; text-align: left;">Date</th>
+                            <th style="padding: 6px; text-align: right;">Target</th>
+                            <th style="padding: 6px; text-align: right;">Chg%</th>
+                            <th style="padding: 6px; text-align: right;">Conf</th>
+                        </tr>
+                """
+                for row in macro_data['Kronos_Detail']:
+                    color = "red" if float(row['chg'].replace('%','')) > 0 else "green"
+                    kronos_table += f"""
+                        <tr>
+                            <td style="padding: 6px; border-bottom: 1px solid #eee;">{row['name']}</td>
+                            <td style="padding: 6px; border-bottom: 1px solid #eee;">{row['date']}</td>
+                            <td style="padding: 6px; border-bottom: 1px solid #eee; text-align: right;">{row['close']}</td>
+                            <td style="padding: 6px; border-bottom: 1px solid #eee; text-align: right; color: {color}; font-weight: bold;">{row['chg']}</td>
+                            <td style="padding: 6px; border-bottom: 1px solid #eee; text-align: right;">{row['conf']}</td>
+                        </tr>
+                    """
+                kronos_table += "</table></div>"
+                macro_html += kronos_table
+
         full_html = f"""
         <html>
         <head>
