@@ -213,8 +213,11 @@ class DeepSeekClient:
             pass
         # print("✓ 当前对话上下文已重置")
     
-    def chat(self, message, model_type="chat", system_prompt="You are a helpful assistant", use_history=True):
-        """与模型进行对话 (自动适配 Qwen/DeepSeek)"""
+    def chat(self, message, model_type="chat", system_prompt="You are a helpful assistant", use_history=True, show_reasoning=False):
+        """
+        与模型进行对话 (自动适配 Qwen/DeepSeek)
+        :param show_reasoning: 是否在控制台打印思考过程 (默认为 False，只打印结果)
+        """
         if model_type not in self.models:
             print(f"⚠ 模型类型 {model_type} 未找到，回退到 chat 模式")
             model_type = "chat"
@@ -237,7 +240,8 @@ class DeepSeekClient:
         if self.provider == "qwen" and (model_type == "reasoner" or "plus" in model or "max" in model):
             # 强制开启 Qwen 的思考能力
             extra_body["enable_thinking"] = True
-            print("🧠 Qwen 深度思考模式已激活...")
+            if show_reasoning:
+                print("🧠 Qwen 深度思考模式已激活...")
         
         try:
             response = self.client.chat.completions.create(
@@ -247,7 +251,7 @@ class DeepSeekClient:
                 extra_body=extra_body if extra_body else None
             )
             
-            result = self._handle_stream_response(response, model_type)
+            result = self._handle_stream_response(response, model_type, show_reasoning)
             
             # 保存到历史记录
             if use_history:
@@ -265,7 +269,7 @@ class DeepSeekClient:
                 "cost": 0.0
             }
     
-    def _handle_stream_response(self, response, model_type):
+    def _handle_stream_response(self, response, model_type, show_reasoning):
         """处理流式响应 (支持 Qwen 的 reasoning_content)"""
         full_response = ""
         full_reasoning = ""
@@ -274,8 +278,8 @@ class DeepSeekClient:
         
         print(f"\n[{self.provider.upper()}] 回复: ", end="", flush=True)
         
-        # 打印思考过程分隔线 (针对 Qwen)
-        if self.provider == "qwen":
+        # 打印思考过程分隔线 (针对 Qwen)，仅当 show_reasoning 为 True 时显示
+        if self.provider == "qwen" and show_reasoning:
             print("\n" + "="*15 + " 思考过程 " + "="*15 + "\n", end="", flush=True)
 
         for chunk in response:
@@ -296,17 +300,18 @@ class DeepSeekClient:
             reasoning = getattr(delta, 'reasoning_content', None)
             
             if reasoning:
-                print(reasoning, end="", flush=True)
+                if show_reasoning:
+                    print(reasoning, end="", flush=True)
                 full_reasoning += reasoning
             
             # 3. 处理正式回复内容
             if hasattr(delta, 'content') and delta.content:
-                # 如果从思考转为回复，打印分隔线
-                if full_reasoning and not is_answering:
+                # 如果从思考转为回复，打印分隔线 (仅当显示了思考过程时)
+                if full_reasoning and not is_answering and show_reasoning:
                     print("\n\n" + "="*15 + " 完整回复 " + "="*15 + "\n", end="", flush=True)
                     is_answering = True
-                elif not full_reasoning and not is_answering and self.provider == "qwen": 
-                    # 针对 Qwen，如果一开始就是 content (没有思考)，也标记一下
+                elif not full_reasoning and not is_answering and self.provider == "qwen" and show_reasoning: 
+                    # 针对 Qwen，如果一开始就是 content (没有思考) 且要求显示推理状态，也标记一下
                     print("\n\n" + "="*15 + " 完整回复 " + "="*15 + "\n", end="", flush=True)
                     is_answering = True
                 
@@ -368,7 +373,8 @@ class DeepSeekClient:
                     print("请输入有效内容")
                     continue
                 
-                result = self.chat(user_input, model_type, system_prompt)
+                # 默认交互模式也不显示思考过程，保持界面整洁
+                result = self.chat(user_input, model_type, system_prompt, show_reasoning=False)
                 
                 # 显示使用统计
                 if result["usage"]:

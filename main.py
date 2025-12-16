@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-DeepSeek Finance Project V3.0-07 
+DeepSeek Finance Project V3.25 (Local First Architecture)
 """
 
 import os
 import sys
+import glob
 import shutil
 import subprocess
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -21,8 +23,61 @@ from data_manager import DataManager
 from api_tester import APITester  # [V3.26 新增]
 
 # --- 版本控制 ---
-SYSTEM_VERSION = "V3.0-07"
+SYSTEM_VERSION = "V3.25"
 BUILD_DATE = "2025-12-04"
+
+# --- 全局日志系统 [V3.42 新增] ---
+class DualLogger(object):
+    """
+    双向日志记录器：同时将输出发送到 终端(stdout) 和 日志文件
+    """
+    def __init__(self, filename):
+        self.terminal = sys.stdout
+        self.log = open(filename, "a", encoding='utf-8')
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush()  # 确保实时写入，防止崩溃时丢失日志
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+
+def setup_global_logging():
+    """初始化全局日志记录，自动按日期+序号生成文件"""
+    log_dir = os.path.join("data", "log")
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+
+    today = datetime.now().strftime("%Y%m%d")
+    
+    # 查找当天已有的日志文件，确定下一个序号
+    pattern = os.path.join(log_dir, f"{today}_*.txt")
+    existing_files = glob.glob(pattern)
+    
+    next_idx = 1
+    if existing_files:
+        indexes = []
+        for f in existing_files:
+            try:
+                # 解析文件名: 20251216_01.txt -> 01
+                basename = os.path.basename(f)
+                idx_str = basename.split('_')[1].split('.')[0]
+                indexes.append(int(idx_str))
+            except:
+                continue
+        if indexes:
+            next_idx = max(indexes) + 1
+            
+    filename = f"{today}_{next_idx:02d}.txt"
+    filepath = os.path.join(log_dir, filename)
+    
+    # 劫持标准输出和错误输出
+    sys.stdout = DualLogger(filepath)
+    sys.stderr = sys.stdout # 错误信息也记录到同一个文件
+    
+    print(f"📝 全局日志已启动: {filepath}")
 
 def print_banner():
     print("=" * 60)
@@ -140,7 +195,7 @@ def main():
     
     # --- 用户配置区 ---
     # 在这里修改默认首选 AI ( "qwen" 或 "deepseek" )
-    PREFERRED_PROVIDER = "qwen" 
+    PREFERRED_PROVIDER = "deepseek" 
     # ------------------
 
     qwen_key = os.environ.get("Qwen_API_KEY") or os.environ.get("DASHSCOPE_API_KEY")
@@ -244,4 +299,5 @@ def main():
             print("❌ 无效输入")
 
 if __name__ == "__main__":
+    setup_global_logging() # [V3.42] 启动日志记录
     main()
