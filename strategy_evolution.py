@@ -1,5 +1,65 @@
 # deepseek_finance_project_V2/strategy_evolution.py
 
+"""
+==========================================================================================
+【文件定义】
+文件名: strategy_evolution.py
+类名  : StrategyEvolutionEngine
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. __init__(db_path, deepseek_client)
+   [连接 SQLite] -> [Call _init_db] -> [Ready]
+
+2. _init_db
+   [Create Table: predictions (预测记录)] -> [Create Table: lessons (经验教训)]
+         ↓
+   [Create Table: performance_stats (准确率统计)] -> [Commit]
+
+3. reset_evolution_data
+   [Drop Tables] -> [Commit] -> [Call _init_db (Rebuild)] -> [Return Success]
+
+4. log_prediction(symbol, etf_name, input_data, ai_response)
+   [Insert into predictions] -> (Status='pending', Confidence=AI_Conf)
+         ↓
+   [Commit] -> [Print Success]
+
+5. verify_predictions(days_ago)
+   [Select pending predictions <= target_date] -> [Loop Records]
+         ↓
+   [Get Actual Return] -> [Evaluate Correctness] -> [Update predictions table]
+         ↓
+   [Update performance_stats] -> {Incorrect?} -> (Trigger Reflection)
+         ↓
+   [Commit] -> [Return Results]
+
+6. _get_actual_return(symbol, days)
+   [YFinance Fetch History] -> [Calc % Change (End/Start - 1)] -> [Return Float]
+
+7. _evaluate_prediction(outlook, actual_change)
+   {Bullish & >0?} OR {Bearish & <0?} OR {Neutral & Abs<2%?} -> [Return Bool]
+
+8. _trigger_self_reflection(symbol, ..., snapshot_json)
+   {Client Missing?} -> (Return None)
+         ↓
+   [Construct Reflection Prompt] -> (Include Context: Macro/ETF/Sentiment)
+         ↓
+   [Call DeepSeek] -> [Extract Lesson] -> [Insert into lessons] -> [Return Content]
+
+9. _update_performance_stats(symbol, is_correct)
+   [Select Current Stats] -> [Update Total/Correct/Accuracy] -> [Upsert DB]
+
+10. get_accumulated_wisdom(limit)
+    [Select lessons] -> [Order by (Success-Failure) Desc] -> [Return List]
+
+11. get_performance_report
+    [Select All Stats] -> [Calc Overall Accuracy] -> [Return Detailed Dict]
+
+12. close
+    [Close DB Connection]
+==========================================================================================
+"""
+
 import sqlite3
 import json
 import datetime

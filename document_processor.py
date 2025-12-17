@@ -1,68 +1,73 @@
+# deepseek_finance_project_V3/document_processor.py
+
+"""
+==========================================================================================
+【文件定义】
+文件名: document_processor.py
+类名  : DocumentProcessor
+==========================================================================================
+【函数清单与逻辑流】
+
+1. __init__
+   [初始化] -> [无特殊依赖]
+
+2. extract_text_from_pdf(pdf_path)
+   [打开PDF (pdfplumber)] -> [遍历页面] -> [提取文本]
+          ↓
+   [清洗文本 (clean_text)] -> [返回纯文本字符串]
+
+3. clean_text(text)
+   [去除多余换行] -> [去除特殊字符] -> [标准化格式]
+==========================================================================================
+"""
+
+import pdfplumber
+import re
 import os
-import glob
-from typing import List
-from .financial_brain import FinancialBrainRAG
 
 class DocumentProcessor:
     """
-    文档批量处理器 - 用于初始化知识库
+    文档处理工具类
+    职责：仅负责从各种文件中提取清洗后的文本。
+    注意：此类不应依赖 FinancialBrain，以防止循环引用。
     """
-    
-    def __init__(self, rag_engine: FinancialBrainRAG):
-        self.rag_engine = rag_engine
-    
-    def process_research_directory(self, directory_path: str) -> Dict[str, Any]:
+    def __init__(self):
+        pass
+
+    def extract_text_from_pdf(self, pdf_path):
         """
-        处理整个研报目录
+        从PDF中提取全量文本
+        :param pdf_path: PDF文件路径
+        :return: 清洗后的字符串
         """
-        results = {
-            "successful": 0,
-            "failed": 0,
-            "files_processed": []
-        }
-        
-        # 支持多种格式
-        pdf_files = glob.glob(os.path.join(directory_path, "**/*.pdf"), recursive=True)
-        
-        for pdf_file in pdf_files:
-            # 从文件名推断标签
-            filename = os.path.basename(pdf_file)
-            tag = self._infer_tag_from_filename(filename)
+        if not os.path.exists(pdf_path):
+            print(f"❌ 文件不存在: {pdf_path}")
+            return ""
             
-            print(f"📄 处理: {filename} -> 标签: {tag}")
+        full_text = ""
+        try:
+            with pdfplumber.open(pdf_path) as pdf:
+                print(f"📄 开始解析 PDF (共 {len(pdf.pages)} 页)...")
+                for i, page in enumerate(pdf.pages):
+                    text = page.extract_text()
+                    if text:
+                        full_text += text + "\n"
             
-            if self.rag_engine.ingest_pdf_report(pdf_file, tag):
-                results["successful"] += 1
-                results["files_processed"].append({
-                    "file": filename,
-                    "tag": tag,
-                    "status": "success"
-                })
-            else:
-                results["failed"] += 1
-                results["files_processed"].append({
-                    "file": filename,
-                    "tag": tag, 
-                    "status": "failed"
-                })
-        
-        return results
-    
-    def _infer_tag_from_filename(self, filename: str) -> str:
+            return self.clean_text(full_text)
+            
+        except Exception as e:
+            print(f"❌ PDF 解析异常: {e}")
+            return ""
+
+    def clean_text(self, text):
         """
-        从文件名推断内容标签
+        文本清洗标准化
         """
-        filename_lower = filename.lower()
+        if not text: return ""
         
-        if any(word in filename_lower for word in ['医药', '医疗', '生物', '创新药']):
-            return "pharma"
-        elif any(word in filename_lower for word in ['芯片', '半导体', '集成电路']):
-            return "chips" 
-        elif any(word in filename_lower for word in ['新能源', '光伏', '锂电池']):
-            return "energy"
-        elif any(word in filename_lower for word in ['金融', '银行', '保险', '券商']):
-            return "finance"
-        elif any(word in filename_lower for word in ['消费', '白酒', '零售']):
-            return "consumption"
-        else:
-            return "general"
+        # 1. 替换连续空格
+        text = re.sub(r'\s+', ' ', text)
+        # 2. 修复常见的中文章节断行 (可选)
+        # text = re.sub(r'(?<=[\u4e00-\u9fa5])\s+(?=[\u4e00-\u9fa5])', '', text) 
+        
+        return text.strip()

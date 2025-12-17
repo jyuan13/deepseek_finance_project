@@ -1,4 +1,50 @@
-# deepseek_finance_project_V3/finance_core.py
+"""
+==========================================================================================
+【文件定义】
+文件名: finance_core.py
+类名  : FinanceCore
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. __init__(client, fdm, shadow_engine, ...)
+   [依赖注入] -> (Client, FDM, Shadow, Guard, Macro, Prompt, Kronos)
+         ↓
+   [配置宏观指数列表] -> [配置 Kronos 预测标的] -> [Ready]
+
+2. scan_macro_environment(predict, debug)
+   [MacroAnalyzer] -> (指数趋势 + 宏观流动性) -> [打印概览]
+         ↓
+   [Kronos Check] -> {Active?} -> [Loop Targets: Fetch Hist -> Predict -> Append]
+         ↓
+   [合并数据] -> [返回 Macro Data]
+
+3. analyze_fund(fund_code, user_cost, ...)
+   [FDM Info/Holdings] -> [Shadow Calc NAV] -> [News + RAG Query] -> [Risk Guard Check]
+         ↓
+   [Calc MA Trend] -> [Calc Est PnL] -> [Construct LLM Prompt (Macro+RAG+Risk)]
+         ↓
+   [Call LLM (Reasoner)] -> [Parse JSON] -> [Return Decision]
+
+4. analyze_index(symbol, market_value, ...)
+   [Get Snapshot] -> {Valid?} -> [Calc FX Impact (USD/CNY)] -> [Calc Today PnL]
+         ↓
+   [Get News] -> [Calc Tech Trend (MA20)] -> [Construct LLM Prompt]
+         ↓
+   [Call LLM] -> [Parse JSON] -> [Return Decision]
+
+5. _calculate_ma_trend(fund_code, debug)
+   [Get NAV History] -> {Len < 20?} -> (Return "数据不足")
+         ↓
+   [Calc MA10/20/60] -> [Compare Current vs MA] -> [Determine Trend State]
+         ↓
+   [Return Trend String]
+
+6. _parse_llm_json(content)
+   [Regex Match ```json ... ```] -> {Match?} -> (Load Group 1)
+         ↓
+   (No Match) -> [Load Full Content] -> {Exception?} -> [Return Default Error Dict]
+==========================================================================================
+"""
 
 import json
 import re
@@ -6,7 +52,6 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
-# 解决 numpy float32 无法被 json 序列化的问题
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.integer):
@@ -22,8 +67,9 @@ class NumpyEncoder(json.JSONEncoder):
 class FinanceCore:
     """
     金融分析核心逻辑层 (Model)
-    负责数据组装、Prompt生成、宏观扫描等核心算法
-    [V3.7 News Enhanced] 强制控制台输出舆情摘要，确保用户可见
+    [V3.92 Brain Activated] 
+    1. 即使行情缺失，也坚持完成分析
+    2. 显式调用 RAG 知识库，将研报观点注入 Prompt
     """
     def __init__(self, client, fdm, shadow_engine, risk_guard, macro_analyzer, prompt_builder, kronos_provider):
         self.client = client
@@ -32,7 +78,7 @@ class FinanceCore:
         self.guard = risk_guard
         self.macro_analyzer = macro_analyzer
         self.prompt_builder = prompt_builder
-        self.kronos_provider = kronos_provider # 这是一个返回 Kronos 实例的函数 (lambda)
+        self.kronos_provider = kronos_provider 
 
         # 宏观指数配置
         self.indices_config = {
@@ -61,7 +107,6 @@ class FinanceCore:
         print("🌍 正在扫描宏观环境 (读取本地缓存/联网)...")
         macro_data = {}
         try:
-            # 1. 基础趋势
             macro_data = self.macro_analyzer.analyze_indices_trend(self.indices_config)
             if debug: print(f"\n🐛 [DEBUG] 宏观数据: {macro_data}")
             
@@ -70,7 +115,6 @@ class FinanceCore:
             for k, v in macro_data.items():
                 print(f"  - {k:<15}: {v}")
             
-            # 2. Kronos 预测
             kronos = self.kronos_provider()
             if predict and kronos and kronos.is_active:
                 print(f"\n🤖 Kronos Global Forecast (Scanning {len(self.kronos_targets)} Indices)...")
@@ -84,7 +128,6 @@ class FinanceCore:
                     
                     df_hist = self.fdm.provider.fetch_history_kline(symbol, market=market)
                     if not df_hist.empty:
-                        # 尝试拼接今日快照
                         snapshot, valid = self.fdm.get_realtime_snapshot(symbol)
                         if valid and snapshot.get('price'):
                             last_hist_date = pd.to_datetime(df_hist.iloc[-1]['date']).date()
@@ -131,24 +174,36 @@ class FinanceCore:
         real_name = info.get('name', fund_code)
         display_name = f"{real_name} ({fund_code})"
         
-        # 1. 获取持仓与影子净值
         holdings = self.fdm.get_top_holdings(fund_code)
         est_nav_chg, basis = self.shadow.calc_realtime_nav(fund_code, holdings)
         
-        # 2. 获取并打印舆情 [New]
+        # [News] 获取新闻
         news = self.fdm.get_aggregated_news(fund_code)
         if news:
             print(f"   📰 关联舆情 ({len(news)}条):")
             for n in news[:3]:
-                # 截断长标题
                 print(f"     - {n[:60]}...")
         else:
             print("   📰 关联舆情: 暂无显著新闻")
+            
+        # [RAG] 获取知识库研报 (Core Fix)
+        rag_context = "暂无相关研报"
+        try:
+            # 尝试通过 prompt_builder.rag_engine 获取上下文
+            # 假设 rag_engine 有一个标准的 query 接口
+            if hasattr(self.prompt_builder, 'rag_engine') and self.prompt_builder.rag_engine:
+                # 构造查询词：代码 + 名称 + "投资观点"
+                query_text = f"{fund_code} {real_name} 投资价值 分析"
+                # 假设 query 方法返回 list of strings
+                rag_results = self.prompt_builder.rag_engine.query(query_text, n_results=2)
+                if rag_results:
+                    rag_context = "\n".join([f"- {r}" for r in rag_results])
+                    print(f"   🧠 RAG 知识库: 检索到 {len(rag_results)} 条相关观点")
+        except Exception as e:
+            if debug: print(f"   ⚠️ RAG 检索失败: {e}")
 
-        # 3. 计算技术指标
         ma_trend = self._calculate_ma_trend(fund_code, debug=debug)
         
-        # 4. 计算持仓盈亏
         holding_pnl_pct = 0.0
         pnl_desc = "(盈亏数据不足)"
         
@@ -167,7 +222,6 @@ class FinanceCore:
                 holding_pnl_pct = est_nav_chg
                 pnl_desc = f"{holding_pnl_pct:.2f}% (仅今日浮动)"
         
-        # 5. 风控检查
         risk_ctx = {
             "shadow_change": est_nav_chg, 
             "holding_pnl": holding_pnl_pct,
@@ -178,7 +232,6 @@ class FinanceCore:
         
         is_safe, risk_msg = self.guard.check_risk("BUY", risk_ctx)
         
-        # 6. 格式化数据准备 Prompt
         limit_str = f"{max_invest_limit}元" if max_invest_limit > 0 else "NA (不限)"
         target_str = f"{target_amount}元" if target_amount > 0 else "NA (未设定)"
         dca_str = f"{dca_amount}元" if dca_amount > 0 else "0 (非定投)"
@@ -188,11 +241,7 @@ class FinanceCore:
         
         fallback_instruction = ""
         if "模型未就绪" in kronos_signal:
-            fallback_instruction = """
-            ⚠️ **注意**: Kronos AI 预测暂时不可用。请立即降级策略：
-            1. **重点参考 Shadow NAV**: 这是最实时的估值。
-            2. **参考均线趋势**: 关注 MA20/MA60 状态。
-            """
+            fallback_instruction = "⚠️ **注意**: Kronos AI 预测暂时不可用。请重点参考 Shadow NAV。"
 
         prompt = f"""
 # Role: Chief Risk Officer (CIO)
@@ -215,6 +264,7 @@ class FinanceCore:
 # 环境与舆情
 - 宏观环境: {macro_str}
 - 关键新闻: {chr(10).join(news[:5]) if news else "无"}
+- 机构/研报观点 (RAG): {rag_context}
 - 风控结论: {risk_msg}
 
 # Requirement
@@ -225,13 +275,13 @@ Please think and output strictly in Chinese.
 1. **定投优先**: 如果这是定投计划的一部分，且未触发止损，优先建议执行定投。
 2. **遵守限额**: 建议买入金额不得超过每日限额。
 3. **仓位控制**: 参考"计划投资总额"，如果已接近目标，应减少买入或暂停。
-4. **舆情分析**: 如果有关键新闻，请在理由中简要分析其影响。
+4. **综合研判**: 结合RAG机构观点和实时新闻进行修正。
 
 请输出 JSON:
 ```json
 {{
     "signal": "BUY/SELL/HOLD",
-    "reason": "决策理由（包含宏观、技术、舆情三方面，100字以内）",
+    "reason": "决策理由（包含宏观、技术、舆情/研报三方面，100字以内）",
     "suggested_amount": "建议金额 (数字或'0')"
 }}
 """ 
@@ -239,7 +289,6 @@ Please think and output strictly in Chinese.
         response = self.client.chat(prompt, model_type="reasoner", use_history=False)
         result_json = self._parse_llm_json(response.get('content', ''))
         
-        # 补充元数据
         result_json['fund_name'] = real_name
         result_json['fund_code'] = fund_code
         result_json['comment'] = fund_comment
@@ -253,26 +302,31 @@ Please think and output strictly in Chinese.
         print(f"\n{'='*20} 分析指数: {symbol} {'='*20}")
         
         snapshot, valid = self.fdm.get_realtime_snapshot(symbol)
-        if not valid: return None
         
-        current_price = snapshot['price']
-        prev_close = snapshot['prev_close']
-        idx_change_pct = ((current_price - prev_close) / prev_close) * 100
-        
-        real_change_pct = idx_change_pct
-        currency_info = ""
-        
-        if symbol.startswith("^") and symbol != "^HSI": 
-            usd_rate, usd_chg = fx_data
-            real_change_pct = idx_change_pct + usd_chg
-            currency_info = f"(含汇率波动 {usd_chg:+.2f}%)"
+        if not valid:
+            print("     ⚠️ 实时行情缺失，尝试仅基于宏观和新闻进行分析...")
+            idx_change_pct = 0.0
+            real_change_pct = 0.0
+            today_pnl_amt = 0.0
+            currency_info = "(行情缺失)"
+        else:
+            current_price = snapshot['price']
+            prev_close = snapshot['prev_close']
+            idx_change_pct = ((current_price - prev_close) / prev_close) * 100
             
-        today_pnl_amt = market_value * (real_change_pct / 100)
-        
-        print(f"   📉 指数涨跌: {idx_change_pct:+.2f}%")
-        print(f"   💰 今日预估: {today_pnl_amt:+.2f} 元 {currency_info}")
+            real_change_pct = idx_change_pct
+            currency_info = ""
+            
+            if symbol.startswith("^") and symbol != "^HSI": 
+                usd_rate, usd_chg = fx_data
+                real_change_pct = idx_change_pct + usd_chg
+                currency_info = f"(含汇率波动 {usd_chg:+.2f}%)"
+                
+            today_pnl_amt = market_value * (real_change_pct / 100)
+            
+            print(f"   📉 指数涨跌: {idx_change_pct:+.2f}%")
+            print(f"   💰 今日预估: {today_pnl_amt:+.2f} 元 {currency_info}")
 
-        # [New] 获取并打印指数新闻
         news = self.fdm.provider.news.fetch_sentiment_news(symbol)
         if news:
             print(f"   📰 关联舆情 ({len(news)}条):")
@@ -286,11 +340,12 @@ Please think and output strictly in Chinese.
             df = self.fdm.provider.fetch_history_kline(symbol, market="US" if symbol.startswith("^") else "A")
             if not df.empty and len(df) > 20:
                  ma20 = df['close'].rolling(20).mean().iloc[-1]
-                 if current_price > ma20: ma_trend = "多头 ( > MA20)"
+                 if valid and snapshot['price'] > ma20: ma_trend = "多头 ( > MA20)"
                  else: ma_trend = "空头 ( < MA20)"
         except: pass
 
         target_str = f"{target_amount}元" if target_amount > 0 else "NA (未设定)"
+        change_str = f"{idx_change_pct:+.2f}%" if valid else "N/A"
 
         prompt = f"""
 # Role: Chief Investment Officer
@@ -300,7 +355,7 @@ Please think and output strictly in Chinese.
 - 持仓市值: {market_value} CNY
 - 累计盈亏: {pnl_rate}%
 - 计划投资总额: {target_str}
-- 今日指数涨跌: {idx_change_pct:+.2f}%
+- 今日指数涨跌: {change_str}
 - 汇率修正后涨跌: {real_change_pct:+.2f}% {currency_info}
 - 今日预估盈亏: {today_pnl_amt:+.1f} CNY
 - 技术状态: {ma_trend}
@@ -314,7 +369,7 @@ Please think and output strictly in Chinese.
 # Requirement
 Please think and output strictly in Chinese.
 
-请给出操作建议 (Buy/Sell/Hold) 及简短理由。
+请给出操作建议 (Buy/Sell/Hold) 及简短理由。如果数据缺失，请提示风险。
 输出 JSON: {{ "signal": "...", "reason": "...", "suggested_amount": "0" }}
 """
         print("   🧠 请求 AI 决策...")
@@ -325,8 +380,8 @@ Please think and output strictly in Chinese.
         result_json['fund_code'] = symbol
         result_json['comment'] = f"[指数] {comment}"
         result_json['time'] = datetime.now().strftime('%m-%d %H:%M')
-        result_json['shadow_nav'] = f"{real_change_pct:+.2f}% (实)"
-        result_json['risk_msg'] = f"今日 {today_pnl_amt:+.0f}元"
+        result_json['shadow_nav'] = f"{real_change_pct:+.2f}%" if valid else "N/A"
+        result_json['risk_msg'] = f"今日 {today_pnl_amt:+.0f}元" if valid else "行情缺失"
         
         return result_json
 

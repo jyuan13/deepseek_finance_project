@@ -1,4 +1,27 @@
-# deepseek_finance_project_V3/risk_guard.py
+"""
+==========================================================================================
+【文件定义】
+文件名: risk_guard.py
+类名  : RiskGuard
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. __init__
+   [定义 Default/Stock 规则] -> [定义 Bond 规则 (严格)]
+         ↓
+   [定义 Mix 规则 (中庸)] -> [风控参数初始化完成]
+
+2. _get_rules(asset_type)
+   {Type == "bond"?} -> (Return Bond Rules)
+         ↓
+   {Type == "mix"?} -> (Return Mix Rules) -> [Else: Return Default Rules]
+
+3. check_risk(signal, context)
+   [获取对应规则] -> {Signal == BUY?} -> (今日跌幅/累计亏损超限? -> 熔断/禁止)
+         ↓
+   {Has Holding?} -> (触及止损线/单日异常? -> 警告/清仓) -> [Return (Bool, Msg)]
+==========================================================================================
+"""
 
 class RiskGuard:
     """
@@ -61,4 +84,4 @@ class RiskGuard:
             if shadow_chg < rules['single_day_drop_limit']:
                 return False, f"⚠️ [预警] 今日跌幅 {shadow_chg}% 异常，建议关注。"
 
-        return True, "✅ 风控通过"
+        return True, "✅ 风控结论通过"

@@ -1,5 +1,61 @@
 # deepseek_finance_project_V3/fund_data_manager.py
 
+"""
+==========================================================================================
+【文件定义】
+文件名: fund_data_manager.py
+类名  : FundDataManager
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. __init__
+   [初始化 DataProvider] -> [初始化 DataManager (DB)]
+         ↓
+   [定义特殊资产映射 (指数/黄金等)] -> [Ready]
+
+2. update_fund_nav(fund_code)
+   {特殊资产?} -> (Return False)
+         ↓
+   [Provider Fetch NAV] -> {Empty?} -> (Return False)
+         ↓
+   [DB Save NAV] -> [Return True]
+
+3. get_fund_nav_history(fund_code, lookback_days)
+   {特殊资产?} -> [Provider Fetch Kline] -> [Format as NAV] -> (Return)
+         ↓
+   [DB Get NAV] -> {Empty or Expired(>3days)?} -> [Call update_fund_nav]
+         ↓
+   [DB Get NAV (Again)] -> [Filter by Date] -> [Return DF]
+
+4. update_fund_holdings(fund_code, force_update)
+   {Not Force & DB Has Data?} -> (Return Local DF)
+         ↓
+   [Provider Fetch Portfolio] -> {NotEmpty?} -> [DB Save Holdings] -> [Return DF]
+
+5. get_top_holdings(fund_code)
+   [DB Get Holdings] -> {Empty?} -> [Call update_fund_holdings]
+         ↓
+   [Format to List of Dict] -> [Return List]
+
+6. get_aggregated_news(fund_code)
+   [Provider Fetch Fund News]
+         ↓
+   [Get Top 3 Holdings] -> [Loop: Fetch Stock News] -> [Extend List]
+         ↓
+   [Deduplicate] -> [Return List]
+
+7. get_fund_basic_info(fund_code)
+   {In Special Assets?} -> (Return Config)
+         ↓
+   [Set Default Info] -> [Try DB Query Name] -> [Return Dict]
+
+8. get_realtime_snapshot(symbol)
+   [Determine Market (US/HK/A)] -> [Provider Get Quote]
+         ↓
+   [Return Snapshot, ValidFlag]
+==========================================================================================
+"""
+
 import pandas as pd
 import akshare as ak
 import contextlib

@@ -1,4 +1,49 @@
-# deepseek_finance_project_V2/dark_flow_detector.py
+"""
+==========================================================================================
+【文件定义】
+文件名: dark_flow_detector.py
+类名  : DarkFlowDetector
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. __init__
+   [Pass] -> (无初始化操作)
+
+2. analyze_dark_flow(symbol, market, **kwargs)
+   [Init Result] -> [Sleep Random(2-4s) 防封] -> {Switch Market?}
+                                                      ↓
+   (CN: _analyze_cn...) / (US: _analyze_us...) / (HK: _analyze_hk...) -> [Return Dict]
+
+3. _analyze_cn_chip_distribution(symbol, **kwargs)
+   [Clean Symbol] -> [Init Default Data] -> [Call _get_chip_data]
+                                                 ↓
+   {Has Data?} -> (Yes: Calc Metrics / No: Set Error) -> [Catch Ex] -> [Return Data]
+
+4. _get_chip_data(symbol)
+   [Try] -> (Call ak.stock_cyq_em) -> [Return DataFrame]
+      ↓
+   [Except] -> [Return None]
+
+5. _calculate_winner_rate(chip_data, current_price)
+   {Check Columns?} -> (Has '获利比例': Return Val)
+         ↓
+   (Else/Except) -> [Return 50.0]
+
+6. _analyze_us_short_interest(symbol, **kwargs)
+   [Placeholder] -> [Return 'Neutral' Signal]
+
+7. _analyze_hk_market(symbol, **kwargs)
+   [Placeholder] -> [Return 'Neutral' Signal]
+
+8. analyze_etf_holdings(etf_holdings)
+   [Slice Top 3 Holdings] -> [Loop] -> [Call analyze_dark_flow]
+         ↓                                   ↓
+   [Collect Results] -> [Call _generate_overall_signal] -> [Return Results Dict]
+
+9. _generate_overall_signal(individual_results)
+   [Process Results] -> [Aggregate Logic] -> [Return 'NEUTRAL' Default]
+==========================================================================================
+"""
 
 import akshare as ak
 import yfinance as yf

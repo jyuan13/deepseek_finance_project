@@ -1,4 +1,47 @@
-# deepseek_finance_project_V2/etf_holdings.py
+"""
+==========================================================================================
+【文件定义】
+文件名: etf_holdings_manager.py
+类名  : ETFHoldingsManager
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. __init__
+   [初始化静态配置字典] -> {预设 513120/513180/512890/159995 持仓}
+         ↓
+   [实例初始化完成 (作为兜底数据)]
+
+2. get_holdings(etf_symbol)
+   [接收 ETF 代码] -> {字典中存在 key?}
+         ↓
+   (Yes: 返回持仓 Dict) / (No: 返回空 Dict)
+
+3. update_holdings_dynamic(etf_symbol)
+   [代码清洗] -> [随机 Sleep] -> [调用 ak.fund_portfolio_em]
+         ↓
+   {数据有效?} -> [取前10重仓] -> [格式化子代码] -> [更新 self.config] -> [Return True/False]
+
+4. _format_code(raw_code)
+   {Len=5?} -> (.HK)
+         ↓
+   {Len=6?} -> (Prefix 6/5/9 -> .SS) / (Prefix 0/1/3 -> .SZ) -> [Return Code]
+
+5. add_holding(etf_symbol, stock_symbol, weight)
+   {ETF Key Exists?} -> (No: Init Dict) -> [Set Stock Weight]
+         ↓
+   [Print Success Msg]
+
+6. remove_holding(etf_symbol, stock_symbol)
+   {ETF Key Exists?} -> {Stock Key Exists?}
+         ↓
+   [Del Config Item]
+
+7. show_holdings(etf_symbol)
+   [Call get_holdings] -> {Has Data?} -> (No: Print Error)
+         ↓
+   [Sort by Weight Desc] -> [Loop Print Items] -> [Calc & Print Total]
+==========================================================================================
+"""
 
 import akshare as ak
 import time

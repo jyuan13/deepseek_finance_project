@@ -1,4 +1,70 @@
-# deepseek_finance_project_V2/technical_engine.py
+"""
+==========================================================================================
+【文件定义】
+文件名: technical_engine.py
+类名  : TechnicalEngine
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. __init__(request_delay, max_retries)
+   [Try Import TA-Lib] -> (Success/Fail? Set HAS_TALIB)
+         ↓
+   [Init Cache Variables] -> [Ready]
+
+2. get_realtime_price(symbol)
+   {EndsWith .HK?} -> [Call _get_hk_realtime_price]
+         ↓
+   {EndsWith .SH/.SZ or Digit?} -> [Try AKShare Spot] -> [Retry Loop]
+         ↓
+   {Is Alpha or .US?} -> [Try YFinance fast_info]
+         ↓
+   [Return Price, ChangePct]
+
+3. _get_hk_realtime_price(symbol)
+   {Cache Valid (<15s)?} -> (Return Cache)
+         ↓
+   [AKShare HK Spot] -> [Update Cache] -> [Find Symbol] -> [Return Price]
+
+4. analyze_holdings_health(holdings_list)
+   [ThreadPoolExecutor] -> [Concurrent: _analyze_single_stock]
+         ↓
+   [Loop Futures] -> [Collect Results] -> [Aggregate Metrics (MA/RSI/ShadowNAV)]
+         ↓
+   [Normalize Metrics] -> [Sort by Weight] -> [Return Results Dict]
+
+5. _analyze_single_stock(stock_info)
+   [Call get_realtime_price] -> {Failed?} -> (Return None)
+         ↓
+   [Call get_stock_data_for_ma] -> {History < 60?} -> (Return No_History)
+         ↓
+   [Call _calculate_indicators] -> [Call _generate_signal] -> [Return Data Dict]
+
+6. get_stock_data_for_ma(symbol)
+   {CN/HK Market?} -> [Call get_stock_data_akshare]
+         ↓
+   {US Market?} -> [Call get_stock_data_yfinance]
+
+7. get_stock_data_akshare(symbol, period)
+   {HK?} -> [AKShare HK Hist]
+         ↓
+   {A-Share?} -> [AKShare A Hist]
+         ↓
+   [Rename Cols] -> [Format Date/Numeric] -> [Return DF]
+
+8. get_stock_data_yfinance(symbol, period)
+   [YFinance Ticker] -> [History] -> [Return DF]
+
+9. _calculate_indicators(df)
+   {HAS_TALIB?} -> (Yes: TA-Lib SMA/RSI)
+         ↓
+   (No: Pandas Rolling Mean / Manual RSI Calc) -> [Return DF]
+
+10. _generate_signal(price, ma_data)
+    [Check MA60 Distance (Pressure/Support)] -> [Check RSI (Overbought/Oversold)]
+          ↓
+    [Return Signal String]
+==========================================================================================
+"""
 
 import yfinance as yf
 import akshare as ak

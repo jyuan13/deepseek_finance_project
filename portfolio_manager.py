@@ -1,176 +1,171 @@
 # deepseek_finance_project_V3/portfolio_manager.py
 
+# File: deepseek_finance_project_V3/portfolio_manager.py
+# Class: PortfolioManager
+# Function: __init__
+# Logic: Initialize paths, load data, ensure structure.
+
+# Function: _load_data
+# Logic: Load JSON, auto-migrate List to Dict.
+
+# Function: _save_data
+# Logic: Recalculate assets, save to JSON.
+
+# Function: _recalc_total_assets
+# Logic: Sum cash + fund value (market_value or cost*shares).
+
+# Function: get_cash_info / update_cash
+# Logic: Manage cash field.
+
+# Function: get_total_assets
+# Logic: Sum everything.
+
+# Function: get_investment_strategies / save_strategy_config
+# Logic: Manage strategy dict.
+
+# Function: get_fund_positions / save_fund_position / remove_fund_position
+# Logic: Manage fund/stock entries with calculated fields.
+
+# Function: get_index_positions / save_index_position / remove_index_position
+# Logic: Manage index entries.
+
 import json
 import os
-import shutil
 from datetime import datetime
 
 class PortfolioManager:
     """
-    持仓管理器 V3.6 (Full Featured)
-    负责管理本地持仓文件，支持基金与指数的双轨制存储，以及现金余额管理。
+    持仓配置管理器 (JSON I/O)
+    [V3.97 Stable] 
+    1. 修复 indices_data 可能为 list 导致的 AttributeError
+    2. 找回所有丢失的现金、策略管理、总资产计算功能
+    3. 完整支持 V3.9 的自动份额反推逻辑
     """
-    def __init__(self):
-        # 配置文件路径
-        self.funds_file = "my_funds.json"
-        self.indices_file = "my_indices.json"
-        self.old_file = "my_portfolio.json"
+    def __init__(self, funds_file='my_funds.json', indices_file='my_indices.json'):
+        self.funds_file = funds_file
+        self.indices_file = indices_file
+        self.config_data = self._load_data(self.funds_file)
+        self.indices_data = self._load_data(self.indices_file)
         
-        # [Migration] 启动时检查并迁移旧版数据
-        self._check_and_migrate()
-        
-        # 初始化文件结构（如果不存在）
-        self._init_files()
+        if isinstance(self.config_data, dict):
+            if "cash" not in self.config_data:
+                self.config_data["cash"] = 0.0
+            if "investment_strategies" not in self.config_data:
+                self.config_data["investment_strategies"] = {
+                    "dca_enabled": True,
+                    "weekly_investment_day": "Thursday"
+                }
+            if "risk_profile" not in self.config_data:
+                 self.config_data["risk_profile"] = "balanced"
 
-    def _check_and_migrate(self):
-        """兼容性迁移：如果存在旧版文件且无新版文件，则重命名迁移"""
-        if os.path.exists(self.old_file) and not os.path.exists(self.funds_file):
-            print(f"🔄 检测到旧版持仓文件，正在迁移至 {self.funds_file}...")
-            try:
-                shutil.move(self.old_file, self.funds_file)
-                print("✅ 迁移成功")
-            except Exception as e:
-                print(f"❌ 迁移失败: {e}")
-
-    def _init_files(self):
-        """初始化必要的数据文件"""
-        # 1. 基金与现金文件
-        if not os.path.exists(self.funds_file):
-            default_funds = {
-                "cash": 100000.0,  # 默认现金
-                "positions_config": []
-            }
-            self._save_json(self.funds_file, default_funds)
-            
-        # 2. 指数文件
-        if not os.path.exists(self.indices_file):
-            self._save_json(self.indices_file, [])
-
-    # ==================== 基金与现金 (Funds & Cash) ====================
-
-    def get_fund_data(self):
-        """读取完整的基金配置数据（包含现金）"""
-        data = self._load_json(self.funds_file)
-        if not isinstance(data, dict):
-            # 数据损坏或格式错误时的兜底
-            return {"cash": 0.0, "positions_config": []}
-        return data
-
-    def get_fund_positions(self):
-        """仅获取基金持仓列表"""
-        data = self.get_fund_data()
-        return data.get("positions_config", [])
-
-    def get_cash_balance(self):
-        """获取当前现金余额"""
-        data = self.get_fund_data()
-        return data.get("cash", 0.0)
-
-    def update_cash(self, new_balance):
-        """更新现金余额"""
-        data = self.get_fund_data()
-        data["cash"] = float(new_balance)
-        self._save_json(self.funds_file, data)
-        print(f"✅ 现金余额已更新: {new_balance}")
-
-    def save_fund_position(self, symbol, cost_price, shares, comment="", max_invest_limit=0, dca_config=None, target_amount=0):
-        """
-        保存或更新单个基金持仓
-        :param symbol: 基金代码
-        :param cost_price: 持仓成本
-        :param shares: 持有份额
-        :param comment: 备注
-        :param max_invest_limit: 单日买入限额 (0为不限)
-        :param dca_config: 定投配置 dict {"enabled": bool, "base_amount": float}
-        :param target_amount: 计划投资总额 (子弹)
-        """
-        data = self.get_fund_data()
-        positions = data.get("positions_config", [])
-        
-        # 构造新记录对象
-        new_entry = {
-            "symbol": symbol,
-            "cost_price": float(cost_price) if cost_price else 0.0,
-            "current_shares": float(shares) if shares else 0.0,
-            "comment": comment,
-            "max_invest_limit": float(max_invest_limit) if max_invest_limit else 0.0,
-            "dca_config": dca_config or {"enabled": False, "base_amount": 0},
-            "target_amount": float(target_amount) if target_amount else 0.0,
-            "last_update": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    def _load_data(self, filepath):
+        default_data = {
+            "cash": 0.0, 
+            "total_assets": 0.0,
+            "risk_profile": "balanced",
+            "investment_strategies": {},
+            "positions_config": []
         }
-
-        # 查找是否存在，存在则更新，不存在则追加
-        found = False
-        for i, p in enumerate(positions):
-            if p['symbol'] == symbol:
-                # 这是一个更新操作，保留原有的一些不需要覆盖的字段（如果有）
-                # 这里我们选择全量覆盖以确保配置最新
-                positions[i] = new_entry
-                found = True
-                break
         
-        if not found:
-            positions.append(new_entry)
+        if not os.path.exists(filepath):
+            return default_data
             
-        data["positions_config"] = positions
-        self._save_json(self.funds_file, data)
-        print(f"✅ 基金持仓已保存: {symbol}")
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                
+            if isinstance(data, list):
+                print(f"🔧 检测到旧版列表格式 ({filepath})，正在自动迁移为字典结构...")
+                return {"positions_config": data}
+            
+            if data is None:
+                return default_data
+                
+            return data
+        except Exception as e:
+            print(f"⚠️ 读取 {filepath} 失败: {e}，使用默认空配置")
+            return default_data
 
-    def remove_fund_position(self, symbol):
-        """删除指定的基金持仓"""
-        data = self.get_fund_data()
-        positions = data.get("positions_config", [])
+    def _save_data(self, filepath, data):
+        if filepath == self.funds_file and isinstance(data, dict):
+            self._recalc_total_assets(data)
+            
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
+    def _recalc_total_assets(self, data):
+        cash = data.get("cash", 0)
+        fund_val = 0
+        for p in data.get("positions_config", []):
+            if "market_value" in p:
+                fund_val += p["market_value"]
+            else:
+                fund_val += p.get("cost_price", 0) * p.get("current_shares", 0)
         
-        # 过滤掉要删除的 symbol
-        new_positions = [p for p in positions if p['symbol'] != symbol]
-        
-        if len(new_positions) == len(positions):
-            print(f"⚠️ 未找到基金: {symbol}")
-            return
+        data["total_assets"] = cash + fund_val
 
-        data["positions_config"] = new_positions
-        self._save_json(self.funds_file, data)
-        print(f"🗑️ 基金持仓已删除: {symbol}")
+    def get_cash_info(self):
+        if not isinstance(self.config_data, dict): return 0.0
+        return self.config_data.get("cash", 0.0)
 
-    # 为了兼容旧代码的调用习惯
+    def update_cash(self, amount):
+        if not isinstance(self.config_data, dict): self.config_data = {}
+        self.config_data["cash"] = float(amount)
+        self._save_data(self.funds_file, self.config_data)
+
+    def get_total_assets(self):
+        cash = self.get_cash_info()
+        fund_val = 0
+        for p in self.get_fund_positions():
+             val = p.get("market_value", p.get("cost_price", 0) * p.get("current_shares", 0))
+             fund_val += val
+        idx_val = 0
+        for p in self.get_index_positions():
+            idx_val += p.get("market_value_cny", 0)
+        return cash + fund_val + idx_val
+
+    def get_risk_profile(self):
+        if not isinstance(self.config_data, dict): return "balanced"
+        return self.config_data.get("risk_profile", "balanced")
+
+    def get_investment_strategies(self):
+        if not isinstance(self.config_data, dict): return {}
+        return self.config_data.get("investment_strategies", {})
+
+    def save_strategy_config(self, strategy_data):
+        if not isinstance(self.config_data, dict): self.config_data = {}
+        if "risk_profile" in strategy_data:
+            self.config_data["risk_profile"] = strategy_data.pop("risk_profile")
+        self.config_data["investment_strategies"] = strategy_data
+        self._save_data(self.funds_file, self.config_data)
+
     def get_current_positions(self):
         return self.get_fund_positions()
 
-    # ==================== 指数相关 (Indices) ====================
+    def get_fund_positions(self):
+        if not isinstance(self.config_data, dict):
+            if isinstance(self.config_data, list): return self.config_data
+            return []
+        return self.config_data.get("positions_config", [])
 
-    def get_index_positions(self):
-        """获取指数持仓列表"""
-        data = self._load_json(self.indices_file)
-        if isinstance(data, list):
-            return data
-        # 如果格式不对，返回空列表
-        return []
-
-    def save_index_position(self, symbol, market_value_cny, pnl_rate, name="", comment="", target_amount=0):
-        """
-        保存或更新指数持仓
-        :param symbol: 指数代码 (如 ^IXIC)
-        :param market_value_cny: 当前持仓市值 (人民币)
-        :param pnl_rate: 当前总盈亏率 (%)
-        :param name: 指数名称
-        :param comment: 备注
-        :param target_amount: 计划投资总额
-        """
-        positions = self.get_index_positions()
-        
+    def save_fund_position(self, symbol, market_value, pnl_rate, calculated_shares, calculated_cost, comment, limit_amount, dca_config, target_amount):
+        positions = self.get_fund_positions()
+        found = False
         new_entry = {
             "symbol": symbol,
-            "name": name,
-            "market_value_cny": float(market_value_cny) if market_value_cny else 0.0,
-            "pnl_rate": float(pnl_rate) if pnl_rate else 0.0,
-            "target_amount": float(target_amount) if target_amount else 0.0,
+            "market_value": float(market_value),
+            "pnl_rate": float(pnl_rate),
+            "current_shares": float(calculated_shares),
+            "cost_price": float(calculated_cost),
             "comment": comment,
-            "last_update": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            "max_invest_limit": float(limit_amount),
+            "dca_config": dca_config,
+            "target_amount": float(target_amount),
+            "last_update": datetime.now().strftime("%Y-%m-%d")
         }
-        
-        found = False
-        for i, p in enumerate(positions):
-            if p['symbol'] == symbol:
+
+        for i, pos in enumerate(positions):
+            if pos['symbol'] == symbol:
                 positions[i] = new_entry
                 found = True
                 break
@@ -178,85 +173,93 @@ class PortfolioManager:
         if not found:
             positions.append(new_entry)
             
-        self._save_json(self.indices_file, positions)
-        print(f"✅ 指数持仓已保存: {symbol}")
+        if not isinstance(self.config_data, dict):
+            self.config_data = {"positions_config": positions}
+        else:
+            self.config_data["positions_config"] = positions
+            
+        self._save_data(self.funds_file, self.config_data)
+
+    def remove_fund_position(self, symbol):
+        positions = self.get_fund_positions()
+        new_positions = [p for p in positions if p['symbol'] != symbol]
+        if isinstance(self.config_data, dict):
+            self.config_data["positions_config"] = new_positions
+        else:
+            self.config_data = {"positions_config": new_positions}
+        self._save_data(self.funds_file, self.config_data)
+
+    def get_index_positions(self):
+        if not isinstance(self.indices_data, dict):
+            if isinstance(self.indices_data, list): return self.indices_data
+            return []
+        return self.indices_data.get("positions_config", [])
+
+    def save_index_position(self, symbol, market_value, pnl_rate, name, comment, target_amount):
+        if not isinstance(self.indices_data, dict):
+            if isinstance(self.indices_data, list):
+                 self.indices_data = {"positions_config": self.indices_data}
+            else:
+                 self.indices_data = {"positions_config": []}
+                 
+        positions = self.indices_data.get("positions_config", [])
+        found = False
+        new_entry = {
+            "symbol": symbol,
+            "name": name,
+            "market_value_cny": float(market_value),
+            "pnl_rate": float(pnl_rate),
+            "target_amount": float(target_amount),
+            "comment": comment,
+            "last_update": datetime.now().strftime("%Y-%m-%d")
+        }
+
+        for i, pos in enumerate(positions):
+            if pos['symbol'] == symbol:
+                positions[i] = new_entry
+                found = True
+                break
+        
+        if not found:
+            positions.append(new_entry)
+        
+        self.indices_data["positions_config"] = positions
+        self._save_data(self.indices_file, self.indices_data)
+    def save_fund_simple(self, symbol, market_value, pnl_rate, limit, dca, target, comment):
+        """[V4.0] 极简保存：只存市值和盈亏，不负责计算份额"""
+        positions = self.get_fund_positions()
+        new_entry = {
+            "symbol": symbol,
+            "market_value": float(market_value),
+            "pnl_rate": float(pnl_rate),
+            "max_invest_limit": float(limit),
+            "dca_config": {"enabled": dca > 0, "base_amount": dca},
+            "target_amount": float(target),
+            "comment": comment,
+            "current_shares": 0, # 占位，设为0，标志着需要在运行时反推
+            "cost_price": 0,     # 占位，运行时计算
+            "last_update": datetime.now().strftime("%Y-%m-%d")
+        }
+        
+        found = False
+        for i, pos in enumerate(positions):
+            if pos['symbol'] == symbol:
+                positions[i] = new_entry
+                found = True
+                break
+        if not found: positions.append(new_entry)
+        
+        if not isinstance(self.config_data, dict): self.config_data = {"positions_config": positions}
+        else: self.config_data["positions_config"] = positions
+        self._save_data(self.funds_file, self.config_data)
 
     def remove_index_position(self, symbol):
-        """删除指定的指数持仓"""
-        positions = self.get_index_positions()
-        new_positions = [p for p in positions if p['symbol'] != symbol]
-        
-        if len(new_positions) == len(positions):
-            print(f"⚠️ 未找到指数: {symbol}")
-            return
-            
-        self._save_json(self.indices_file, new_positions)
-        print(f"🗑️ 指数持仓已删除: {symbol}")
+        if not isinstance(self.indices_data, dict):
+             if isinstance(self.indices_data, list):
+                 self.indices_data = {"positions_config": self.indices_data}
+             else:
+                 return
 
-    # ==================== 通用工具方法 ====================
-
-    def _load_json(self, filepath):
-        """安全读取 JSON 文件"""
-        if not os.path.exists(filepath):
-            return {}
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"⚠️ 读取 {filepath} 失败: {e}")
-            return {}
-
-    def _save_json(self, filepath, data):
-        """安全写入 JSON 文件"""
-        try:
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"❌ 保存 {filepath} 失败: {e}")
-
-    def manage_portfolio(self):
-        """CLI 管理入口 (main.py 调用的菜单)"""
-        while True:
-            print("\n💼 投资组合管理 (双轨版)")
-            print("-" * 30)
-            print("1. 查看基金持仓 (Funds)")
-            print("2. 查看指数持仓 (Indices)")
-            print("3. 修改现金余额 (Cash)")
-            print("0. 返回主菜单")
-            print("-" * 30)
-            
-            choice = input("选择: ").strip()
-            
-            if choice == "1":
-                funds = self.get_fund_positions()
-                print(f"\n📊 当前基金持仓 ({len(funds)}):")
-                if not funds:
-                    print("   (暂无持仓)")
-                for p in funds:
-                    dca = p.get('dca_config', {}).get('base_amount', 0)
-                    target = p.get('target_amount', 0)
-                    print(f"   - {p['symbol']}: 成本 {p['cost_price']}, 份额 {p['current_shares']}, 定投 {dca}, 计划 {target}")
-                    
-            elif choice == "2":
-                indices = self.get_index_positions()
-                print(f"\n📈 当前指数持仓 ({len(indices)}):")
-                if not indices:
-                    print("   (暂无持仓)")
-                for p in indices:
-                    target = p.get('target_amount', 0)
-                    print(f"   - {p['symbol']} ({p.get('name','')}): 市值 ¥{p['market_value_cny']}, 盈亏 {p['pnl_rate']}%, 计划 {target}")
-            
-            elif choice == "3":
-                curr = self.get_cash_balance()
-                print(f"\n💰 当前现金余额: {curr}")
-                try:
-                    new_val = input("请输入新余额: ").strip()
-                    if new_val:
-                        self.update_cash(new_val)
-                except ValueError:
-                    print("❌ 输入无效")
-                    
-            elif choice == "0":
-                break
-            else:
-                print("❌ 无效输入")
+        positions = self.indices_data.get("positions_config", [])
+        self.indices_data["positions_config"] = [p for p in positions if p['symbol'] != symbol]
+        self._save_data(self.indices_file, self.indices_data)

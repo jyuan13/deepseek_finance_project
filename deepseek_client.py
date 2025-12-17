@@ -1,4 +1,82 @@
-# deepseek_finance_project_V3/deepseek_client.py
+"""
+==========================================================================================
+【文件定义】
+文件名: deepseek_client.py
+类名  : DeepSeekClient
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. __init__(api_key, base_url, provider, ...)
+   [配置参数] -> {判断 Provider (Qwen/DeepSeek)} -> [设置 Models & BaseURL]
+           ↓
+   [检查 API Key] -> [初始化 OpenAI Client] -> [创建对话目录]
+
+2. _get_next_conversation_filename
+   [获取今日日期] -> [Glob 扫描目录文件] -> {文件存在?}
+           ↓
+   (Yes: 解析最大编号+1) / (No: 设为 01) -> [返回完整路径]
+
+3. start_new_conversation
+   {检查目录?} -> [调用 _get_next_conversation_filename]
+           ↓
+   [重置 self.conversation_history] -> [设置 current_file] -> [Return True]
+
+4. load_conversation(file_path)
+   [确定目标文件] -> [Open File (Read)] -> [JSON Load]
+           ↓
+   [赋值 self.conversation_history] -> [Print 结果]
+
+5. save_conversation
+   {无当前文件?} -> (调用 start_new_conversation)
+           ↓
+   [Open File (Write)] -> [JSON Dump (Ensure ASCII=False)] -> [Return True]
+
+6. clear_all_conversations
+   [Glob 扫描 *.json] -> {无文件?} -> (Return)
+           ↓
+   [Loop: os.remove] -> [重置内存状态] -> [Print 结果]
+
+7. list_conversations
+   [Glob 扫描] -> [Loop: 解析文件名 (日期/编号)] -> {格式合法?}
+           ↓
+   [构造元数据列表] -> [Sort (日期降序)] -> [Return List]
+
+8. add_to_history(role, content)
+   [Append 消息] -> {长度 > Max * 2 ?} -> (切片: 保留最近 N 轮)
+           ↓
+   [调用 save_conversation]
+
+9. clear_history
+   [self.conversation_history = []] -> (仅重置内存)
+           ↓
+   [保留文件不覆盖]
+
+10. chat(message, model_type, ...)
+    [构建 Messages] -> {Qwen & Reasoner?} -> (添加 extra_body['enable_thinking'])
+           ↓
+    [Client.create (Stream=True)] -> [调用 _handle_stream_response] -> [保存历史]
+
+11. _handle_stream_response(response, ...)
+    [Loop Chunk] -> {Check Usage?} -> {Check Reasoning?} -> {Check Content?}
+           ↓
+    [Print (流式输出 / 思考过程)] -> [累加 Buffer] -> [Return Dict]
+
+12. interactive_chat
+    [Print 欢迎/指令] -> [Loop: Input] -> {Check Cmd (quit/clear/new/list)?}
+           ↓
+    [调用 chat()] -> [Print Usage/Cost] -> [Handle Exception]
+
+13. show_history
+    {Empty?} -> (Return)
+           ↓
+    [Loop History] -> [Format Role/Content] -> [Print]
+
+14. show_conversation_list
+    [调用 list_conversations] -> [Print 列表]
+           ↓
+    [Input 选择] -> {Valid Index?} -> [调用 load_conversation]
+==========================================================================================
+"""
 
 import os
 import json

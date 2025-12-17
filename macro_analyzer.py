@@ -1,4 +1,57 @@
-# deepseek_finance_project_V3/macro_analyzer.py
+"""
+==========================================================================================
+【文件定义】
+文件名: macro_analyzer.py
+类名  : MacroAnalyzer
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. __init__
+   [初始化 FRED 映射] -> [检查并创建缓存目录]
+         ↓
+   [Ready]
+
+2. _load_cache(key)
+   [Check File Exists] -> [Open JSON] -> {Key Exists & Not Expired?}
+         ↓
+   (Yes: Return Data) / (No: Return None)
+
+3. _save_cache(key, data)
+   [Load Existing Cache] -> [Update Key with Timestamp]
+         ↓
+   [Dump to JSON File]
+
+4. analyze_macro_liquidity
+   [Check Cache] -> (Hit? Return)
+         ↓
+   [AKShare Bond Rates] -> (Get US/CN 10Y)
+         ↓
+   {Missing US 10Y?} -> (Fallback: Web Reader FRED)
+         ↓
+   [AKShare/YFinance DXY] -> (Get Dollar Index)
+         ↓
+   [Calc Spread (CN-US)] -> [Save Cache] -> [Return Dict]
+
+5. analyze_cross_border_flow
+   [Try AKShare North Flow Interfaces] -> {Success?}
+         ↓
+   [Match Column Names] -> [Extract Latest Value] -> [Return Dict]
+
+6. analyze_indices_trend(indices_config)
+   [Check Cache] -> (Hit? Return)
+         ↓
+   [Loop Config] -> (1. Try YFinance History)
+         ↓
+   {Fail?} -> (2. Try AKShare Fallback: Index/ETF) -> [Special Logic: HSTech/A50/Gold]
+         ↓
+   [Call _calculate_trend] -> [Aggregate Results] -> [Save Cache] -> [Return Dict]
+
+7. _calculate_trend(hist_df)
+   [Standardize Index/Columns] -> {Len < 60?} -> (Return "Insufficient")
+         ↓
+   [Calc MA20, MA60] -> [Compare Current vs MAs] -> [Return Trend Str]
+==========================================================================================
+"""
 
 import pandas_datareader.data as web
 import yfinance as yf

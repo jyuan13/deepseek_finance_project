@@ -1,84 +1,68 @@
-<div align="center">
-  <img src="https://img.shields.io/badge/Python-3.10+-blue.svg" alt="Python">
-  <img src="https://img.shields.io/badge/AI-DeepSeek%20%7C%20Qwen-green.svg" alt="AI Models">
-  <img src="https://img.shields.io/badge/Finance-AkShare%20%7C%20YFinance-orange.svg" alt="Data Sources">
-  <img src="https://img.shields.io/badge/License-MIT-red.svg" alt="License">
-</div>
+# DeepSeek Finance Project V4.0 (Alpha)
 
-# 🚀 DeepSeek Finance Project V3 (DSFP)
-
-**DSFP V3** 是一个本地优先（Local-First）、高度模块化的智能金融分析系统。它结合了传统金融工程方法（如 RBSA、影子净值估算）与前沿的 AI 技术（DeepSeek LLM、RAG、Kronos 时序预测），旨在为个人投资者提供机构级的投资组合管理、风险监控和决策支持。
-
-> **💡 核心理念**：数据私有化 · 分析透明化 · 决策智能化
+**DeepSeek 金融智能分析系统** 是一个本地优先（Local-First）的 AI 投研辅助平台。V4.0 版本采用了 **Lite Config + Runtime Analysis** 的分离架构，将配置工具轻量化，同时将核心计算逻辑下放至运行时，确保数据的实时性和准确性。系统融合了 RAG（检索增强生成）、Kronos 预测模型与 DeepSeek 大模型的推理能力，为个人投资者提供机构级的深度分析报告。
 
 ---
 
-## 📚 目录
+## 🌟 核心功能 (Core Features)
 
-- [核心功能](#-核心功能)
-- [项目结构](#-项目结构与文件说明)
-- [快速开始](#-快速开始)
-- [后续开发计划 (Roadmap)](#-后续开发计划-roadmap)
-- [免责声明](#-免责声明)
+### 1. 🚀 运行时实时计算 (Runtime Calculation)
+- **动态反推逻辑**：配置端仅需记录“当前市值”与“盈亏率”，分析引擎在运行时自动联网获取实时股价/净值，反推持仓份额与成本，彻底解决静态配置滞后问题。
+- **混合数据源**：集成 AkShare、Yahoo Finance 等多源数据，具备自动兜底机制，确保在单一数据源失效时分析不中断。
 
----
+### 2. 🧠 金融大脑 RAG (Financial Brain)
+- **机构观点捕获**：自动抓取中信、中金、摩根等顶级投行的策略研报，建立本地向量知识库。
+- **语义检索**：基于 `moka-ai/m3e` 中文嵌入模型，分析时自动检索相关的行业逻辑、历史模式与宏观背景。
+- **历史经验记忆**：系统会自动“记忆”每一次的宏观状态预测与实际结果，形成能够进化的经验库。
 
-## ✨ 核心功能
+### 3. 📉 Kronos 趋势预测
+- **AI 预测层**：内置轻量级时序预测模型（Kronos-Small），对纳斯达克、标普500、上证指数等核心标的进行 T+1 趋势预测。
+- **置信度评分**：输出预测涨跌幅的同时附带模型置信度，辅助 LLM 进行加权决策。
 
-### 1. 🔮 深度基金透视
-* **影子净值 (Shadow NAV)**：不依赖滞后的官方净值，通过穿透持仓（支持港股/美股/A股）实时计算基金的估算净值。
-* **RBSA (基于收益的风格分析)**：自动分析基金的历史收益序列，识别其真实的资产配置风格。
-* **多轨行情数据**：集成 `AkShare` (A股/港股) 和 `YFinance` (美股/全球)，内置自动熔断和降级机制，确保数据高可用。
+### 4. 🛠️ 极简配置工具 (Lite GUI)
+- **零依赖架构**：配置工具 (`portfolio_gui.py`) 剥离了 Pandas/AkShare 等重型库，体积缩小至 15MB 左右，秒级启动。
+- **纯粹配置**：专注于 JSON 数据的读写，不承担计算任务，极大降低了崩溃风险。
 
-### 2. 🧠 智能 AI 分析师
-* **Kronos 预测引擎**：基于 Transformer 的轻量级时序模型，对纳指、标普、黄金等 7 大核心资产进行 T+N 趋势预测。
-* **Financial Brain (RAG)**：基于 `ChromaDB` 的检索增强生成系统，根据本地研报库和历史经验提供有据可依的分析。
-* **自动 Prompt 构建**：根据宏观环境、技术指标和舆情动态，动态生成高质量的 LLM 提示词。
-
-### 3. 🛡️ 风险与策略
-* **Risk Guard (风控卫士)**：在生成建议前进行硬性风控审查（止损线、最大回撤、单一资产限额）。
-* **策略进化引擎**：记录每一次决策的胜率，通过反馈循环（Feedback Loop）优化后续的分析策略。
-
-### 4. 📰 全球舆情聚合
-* 集成 `Finnhub`, `AlphaVantage`, `DuckDuckGo` 和 `AkShare` 新闻源，提供多维度的市场情绪分析。
+### 5. 🌍 全球宏观扫描
+- **多资产联动**：自动分析中美股市、港股、黄金、美债收益率及汇率波动。
+- **情绪面分析**：整合 Fear & Greed Index 及市场技术指标，判断当前市场所处的周期（牛/熊/震荡）。
 
 ---
 
-## 📂 项目结构与文件说明
+## 📂 项目结构与文件说明 (Project Structure)
 
-本项目采用模块化设计，逻辑分层如下：
-
-### 🎮 核心入口与调度
+### 核心入口
 | 文件名 | 说明 |
 | :--- | :--- |
-| `main.py` | **主程序入口**，提供 CLI 交互菜单，调度各子模块。 |
-| `finance_analyzer.py` | **分析总线**，协调数据、模型、风控和 LLM，生成最终投资报告。 |
+| `main.py` | **主程序入口**。负责环境自检、菜单调度、以及各子引擎的初始化。 |
+| `portfolio_gui.py` | **轻量级配置工具**。基于 Tkinter 的 GUI，用于编辑持仓 JSON，无重型依赖。 |
 
-### 💾 数据层 (Data Layer)
-* `data_provider.py`: **数据获取核心**，封装接口并实现多源降级/重试机制。
-* `fund_data_manager.py`: **基金数据管家**，负责基金净值、持仓数据的缓存与读取。
-* `data_manager.py`: **数据库接口**，管理 SQLite (`financial_data_v3.db`) 读写。
-* `macro_analyzer.py`: **宏观分析器**，扫描全球指数、美债利率及流动性指标。
+### 核心引擎
+| 文件名 | 说明 |
+| :--- | :--- |
+| `finance_analyzer.py` | **分析调度器**。V4.0 的核心大脑，负责串联宏观扫描、RAG 检索、核心分析与报告生成。 |
+| `finance_core.py` | **逻辑处理核**。包含具体的 Prompt 构建、LLM 交互流程及数据组装逻辑。 |
+| `financial_brain.py` | **RAG 引擎**。管理 ChromaDB 向量库，负责研报抓取、PDF 解析、嵌入与检索。 |
+| `fund_data_manager.py` | **数据管家**。统一管理 AkShare/Yahoo 的数据请求、缓存清洗及实时行情获取。 |
+| `portfolio_manager.py` | **资产管理器**。负责 JSON 文件的读写操作，提供统一的资产增删改查接口。 |
 
-### ⚙️ 分析引擎 (Analysis Engines)
-* `shadow_engine.py`: **影子净值引擎**，实时估算 ETF/基金 盘中净值。
-* `technical_engine.py`: **技术分析引擎**，计算 MA, RSI, MACD 等指标。
-* `rbsa_engine.py`: **风格分析引擎**，回归分析确定基金风格。
-* `sentiment_engine.py`: **舆情引擎**，清洗和评分新闻数据。
-* `risk_guard.py`: **风控模块**，执行交易前硬性规则检查。
-* `strategy_evolution.py`: **策略进化**，基于历史胜率调整参数。
+### 辅助组件
+| 文件名 | 说明 |
+| :--- | :--- |
+| `finance_report.py` | **报告生成器**。负责将分析结果渲染为可视化的 HTML 日报，支持全中文界面。 |
+| `document_processor.py` | **文档处理器**。基于 `pdfplumber` 的 PDF 文本提取与清洗工具。 |
+| `kronos_adapter.py` | **预测适配器**。连接 Kronos 预测模型，提供标准化的预测接口。 |
+| `deepseek_client.py` | **LLM 客户端**。封装 OpenAI 格式的 API 调用，处理上下文管理与重试。 |
 
-### 🤖 AI 与 LLM
-* `deepseek_client.py`: **LLM 客户端**，适配 DeepSeek/OpenAI API。
-* `kronos_adapter.py`: **时序预测适配器**，加载本地 Kronos 模型。
-* `financial_brain.py`: **RAG 核心**，管理向量数据库与知识检索。
-* `prompt_builder.py`: **提示词工厂**，组装结构化 Prompt。
+### 数据文件
+- `my_funds.json`: 股票与基金持仓配置。
+- `my_indices.json`: 关注的指数配置。
+- `data/`: 存放生成的 HTML 日报、日志文件及 SQLite 缓存。
+- `brain_memory/`: ChromaDB 向量数据库持久化目录。
 
 ---
 
 ## 🗺️ 后续开发计划 (Roadmap)
-
-我们致力于将 **DSFP** 打造成一个多 Agent 协作的智能投研平台，未来的演进路线如下：
 
 ### Phase 1: 增强感知 (TrendRadar)
 > 🎯 **目标**：从被动分析转向主动捕捉
@@ -88,9 +72,9 @@
 
 ### Phase 2: 多 Agent 架构 (Multi-Agent System)
 > 🤖 **目标**：模拟真实的投研团队协作
--  📊 **数据分析师 Agent**：专注量化数据清洗、技术指标与基本面挖掘。
--  🌍 **宏观策略师 Agent**：专注全球流动性分析、央行政策与资产配置。
--  ⚖️ **交易执行官 Agent**：综合意见，计算买卖点位与定投计划。
+- 📊 **数据分析师 Agent**：专注量化数据清洗、技术指标与基本面挖掘。
+- 🌍 **宏观策略师 Agent**：专注全球流动性分析、央行政策与资产配置。
+- ⚖️ **交易执行官 Agent**：综合意见，计算买卖点位与定投计划。
 
 ### Phase 3: 对抗性审核 (Real-time Auditing)
 > 🛡️ **目标**：降低 AI 幻觉风险
@@ -102,4 +86,3 @@
 > 💻 **目标**：提升交互体验与部署便捷性
 -  **GUI 升级**：完善 `portfolio_gui.py`，提供现代化图形界面。
 -  **跨平台打包**：使用 PyInstaller/Nuitka 打包为 `.exe` / `.app`。
-

@@ -1,4 +1,140 @@
-# deepseek_finance_project_V3/data_provider.py
+"""
+==========================================================================================
+【文件定义】
+文件名: data_provider.py
+模块名: DataProvider (Facade), NewsProvider, MarketProvider
+==========================================================================================
+【类与函数逻辑流 (Class & Function Logic Flow)】
+
+--- Class: NewsProvider (舆情数据源) ---
+1. __init__
+   [Env Vars] -> {Finnhub, AlphaVantage, FMP, TwelveData}
+        ↓
+   [Assign Keys] -> [Ready]
+
+2. _fetch_finnhub(symbol, start, end)
+   {Key Exists?} -> [GET finnhub.io/company-news] -> [Check Status 200]
+        ↓
+   [Parse JSON] -> [Slice Top 5] -> [Return List]
+
+3. _fetch_alpha_vantage(symbol)
+   {Key Exists?} -> [GET alphavantage/NEWS_SENTIMENT] -> [Check Status 200]
+        ↓
+   [Parse 'feed'] -> [Slice Top 3] -> [Return List]
+
+4. _fetch_akshare_news(symbol)
+   {Is Digit?} -> [Call ak.stock_news_em] -> {Empty?}
+        ↓
+   [Iterate Rows] -> [Format Titles] -> [Return List]
+
+5. _fetch_ddg(symbol)
+   [Build Query] -> (Digit? "基金 财经" : "stock news")
+        ↓
+   [DDGS().text()] -> [Filter Keywords] -> [Return Top 3]
+
+6. fetch_sentiment_news(symbol, lookback_days)
+   [Calc Date Range] -> [ThreadPoolExecutor] -> (Submit: FH, AV, AK, DDG)
+        ↓
+   [As Completed] -> [Collect Results] -> [Deduplicate] -> [Return List]
+
+--- Class: MarketProvider (行情数据源) ---
+7. __init__
+   [Init Locks (HK/A)] -> [Create Cache Dir] -> [Load API Keys]
+        ↓
+   [Ready]
+
+8. _fetch_fmp_snapshot(symbol, market)
+   [Format Symbol] -> [GET FMP/quote] -> {Valid Data?}
+        ↓
+   [Extract Price/PrevClose] -> [Return Dict or None]
+
+9. _fetch_av_snapshot(symbol, market)
+   [Format Symbol] -> [GET AV/GLOBAL_QUOTE] -> {Valid Quote?}
+        ↓
+   [Extract 05.price/08.prev] -> [Return Dict or None]
+
+10. _fetch_twelvedata_snapshot(symbol, market)
+    [Format Symbol] -> [GET TD/quote] -> {Valid Data?}
+        ↓
+   [Extract close/previous_close] -> [Return Dict or None]
+
+11. _download_akshare_a_spot (Retry Wrapper)
+    [Call ak.stock_zh_a_spot_em] -> [Return DF]
+
+12. _fetch_akshare_snapshot(symbol)
+    [Lock] -> {Check Mem/File Cache} -> (Miss? Download All & Save)
+        ↓
+    [Search Symbol in Cache] -> {Found?} -> [Return Price/Prev]
+
+13. _fetch_hk_snapshot_akshare (Retry Wrapper)
+    [Call ak.stock_hk_spot_em] -> [Return DF]
+
+14. _fetch_hk_snapshot(symbol)
+    [Lock] -> {Check Mem/File Cache} -> (Miss? Download All & Save)
+        ↓
+    [Search Symbol in Cache] -> {Found?} -> [Return Price/Prev]
+
+15. _fetch_yahoo_snapshot(symbol)
+    [yf.Ticker] -> {Try fast_info} -> {Try info}
+        ↓
+    [Validate Price > 0] -> [Return Dict or None]
+
+16. _fetch_hk_hist_fallback(symbol)
+    [Call ak.stock_hk_hist (Daily)] -> [Get Last Row]
+        ↓
+    [Extract Close] -> [Return as Snapshot Dict]
+
+17. get_quote_snapshot(symbol, market)
+    {Switch Market} -> (HK: Cache->YF->FMP->AV->Fallback) / (A: Cache->YF)
+        ↓
+    [Chain of Responsibility] -> {First Success?} -> [Return Data, True]
+
+18. get_exchange_rate(target_currency)
+    [Construct Symbol (CNY=X)] -> [yf.Ticker] -> [Get Last/Prev]
+        ↓
+    [Calc Pct Change] -> [Return Rate, Pct]
+
+19. fetch_history_kline(symbol, market, days)
+    {Check Local CSV} -> (Found? Return) -> [Select Source: AkShare/YFinance]
+        ↓
+    [Download] -> [Normalize Columns] -> [Save CSV] -> [Return DF]
+
+20. fetch_fund_nav_history(fund_code, ...)
+    [Fix Code 6-digit] -> [Try AkShare Fund Info] -> {Empty?}
+        ↓
+    [Fallback: ETF Mode (AkShare/YF)] -> [Clean Data] -> [Return DF]
+
+--- Class: DataProvider (数据总入口) ---
+21. __init__
+    [Init News/Market Providers] -> [Init ETF Mapping] -> [Create Holdings Dir]
+        ↓
+    [Ready]
+
+22. _fetch_fmp_holdings_backup(symbol)
+    [Loop Suffixes .SS/.HK] -> [GET FMP/etf-holder] -> {Valid?}
+        ↓
+    [Parse to DF] -> [Return DF]
+
+23. _fetch_av_holdings_backup(symbol)
+    (Placeholder) -> [Return Empty DF]
+
+24. _fetch_index_constituents_backup(index_code)
+    {Is HSTECH?} -> [Call AkShare Index] -> [Add Weight]
+        ↓
+    [Return DF]
+
+25. _fetch_local_holdings_backup(symbol)
+    [Check File Exists] -> [pd.read_csv] -> [Return DF]
+
+26. fetch_history_kline / fetch_fund_nav_history / get_exchange_rate
+    [Proxy Pattern] -> [Delegate to self.market] -> [Return Result]
+
+27. fetch_fund_portfolio(fund_code, ...)
+    [Check ETF Mapping] -> {Found? Replace Target} -> [Check Cache]
+        ↓
+    [Chain: AkShare(Year Loop) -> FMP -> AV -> Index -> Local] -> [Return DF]
+==========================================================================================
+"""
 
 import os
 import time
@@ -6,7 +142,7 @@ import requests
 import pandas as pd
 import akshare as ak
 import yfinance as yf
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from retrying import retry
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -15,14 +151,17 @@ import logging
 import urllib3
 import warnings
 
-# [V3.58 最终修复版] 
-# 1. 增加 ETF 联接基金穿透映射 (解决 019671/019670 无持仓问题)
-# 2. 修复 Yahoo Finance 空值异常
-# 3. 优化日志输出
+# [V3.61 终极稳定版] 
+# 1. 集成 ETF 穿透映射 (Smart Mapping)
+# 2. 修复 AkShare 港股历史数据接口报错 (移除 qfq)
+# 3. 修复 Yahoo Finance 空值异常
+# 4. 包含完整的 News, Market, DataProvider 逻辑
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
+# warnings.filterwarnings("ignore", category=RuntimeWarning)
 
+# 暴力超时补丁: 强制所有 requests 请求至少等待 300秒
 _orig_request = requests.Session.request
 def _patched_request(self, method, url, *args, **kwargs):
     timeout = kwargs.get("timeout")
@@ -34,6 +173,9 @@ def _patched_request(self, method, url, *args, **kwargs):
 requests.Session.request = _patched_request
 
 class NewsProvider:
+    """
+    负责舆情数据的获取 (Finnhub, AlphaVantage, AkShare, DuckDuckGo)
+    """
     def __init__(self):
         self.finnhub_key = os.environ.get("Finnhub_API_Key")
         self.av_key = os.environ.get("Alpha_Vantage_API_Key")
@@ -114,6 +256,9 @@ class NewsProvider:
         return list(set(news_pool))
 
 class MarketProvider:
+    """
+    负责市场数据的获取 (行情, K线, 净值, 汇率)
+    """
     def __init__(self):
         self._hk_cache = None
         self._hk_lock = Lock()
@@ -278,11 +423,13 @@ class MarketProvider:
         print(f"   ⚡ [API] 请求 AkShare 港股历史日线 (兜底): {symbol}...")
         try:
             start_date = (datetime.now() - timedelta(days=10)).strftime("%Y%m%d")
-            df = ak.stock_hk_hist(symbol=symbol, period="daily", start_date=start_date, adjust="qfq")
+            # [Fix V3.60] 移除 adjust="qfq"，解决 Pandas DatetimeIndex 切片报错问题
+            df = ak.stock_hk_hist(symbol=symbol, period="daily", start_date=start_date, adjust="")
             if not df.empty:
                 latest = df.iloc[-1]
                 return {'price': float(latest['收盘']), 'prev_close': float(latest['收盘']), 'source': 'AkShare_Hist_Fallback'}
-        except: pass
+        except Exception as e: 
+            print(f"     ❌ AkShare 港股兜底失败: {e}")
         return None
 
     def get_quote_snapshot(self, symbol: str, market="A"):
@@ -311,8 +458,8 @@ class MarketProvider:
                 snapshot = self._fetch_yahoo_snapshot(yf_symbol)
                 
                 if not snapshot and symbol.isdigit() and not (upper_sym.endswith('.SS') or upper_sym.endswith('.SZ')):
-                     other_suffix = ".SZ" if yf_symbol.endswith(".SS") else ".SS"
-                     snapshot = self._fetch_yahoo_snapshot(f"{symbol}{other_suffix}")
+                      other_suffix = ".SZ" if yf_symbol.endswith(".SS") else ".SS"
+                      snapshot = self._fetch_yahoo_snapshot(f"{symbol}{other_suffix}")
             
         else: # US / Global Index
             snapshot = self._fetch_yahoo_snapshot(symbol)
@@ -348,6 +495,7 @@ class MarketProvider:
             return 1.0, 0.0
 
     def fetch_history_kline(self, symbol: str, market="A", days=365):
+        """历史 K 线获取"""
         start_date_str = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
         end_date_str = datetime.now().strftime("%Y-%m-%d")
         start_date_ak = start_date_str.replace("-", "")
@@ -436,13 +584,15 @@ class MarketProvider:
         
         if str(fund_code).isdigit() and len(str(fund_code)) < 6:
             fund_code = str(fund_code).zfill(6)
+            print(f"     🔧 自动修正代码为: {fund_code}")
             
         df = pd.DataFrame()
         try:
             df = ak.fund_open_fund_info_em(symbol=fund_code, indicator="单位净值走势")
             if not df.empty:
                 df = df.rename(columns={"净值日期": "date", "单位净值": "nav", "日增长率": "daily_change"})
-        except Exception: pass
+        except Exception as e: 
+            print(f"     ❌ AkShare 净值异常: {str(e)[:100]}...")
 
         if df.empty:
             print(f"   ⚡ [API] 尝试作为 ETF/股票获取行情: {fund_code}...")
@@ -477,6 +627,7 @@ class MarketProvider:
 class DataProvider:
     """
     数据层总入口 (Facade)
+    聚合 NewsProvider 和 MarketProvider，并提供组合类持仓穿透功能
     """
     def __init__(self):
         self.news = NewsProvider()
@@ -486,15 +637,12 @@ class DataProvider:
         if not os.path.exists(self.holdings_dir):
             os.makedirs(self.holdings_dir)
             
-        # [Fix V3.58] 新增 ETF 穿透映射
-        # 广发港股创新药 C(019671)/A(019670) -> 追踪 513120 (沪港深创新药ETF) -> 甚至直接追踪 002371 (成分股)
-        # 这里我们映射到一个相似的场内 ETF：159941 (纳指) 等等
-        # 对于 019671，我们映射到 513120 (恒生生物科技ETF)
+        # [Fix V3.61] ETF 映射表 (涵盖 A/C 份额穿透到场内 ETF)
         self.etf_mapping = {
             "013403": {"target": "513180", "index": "HSTECH"}, 
             "012804": {"target": "513180", "index": "HSTECH"}, 
-            "019671": {"target": "513120", "index": "HK_DRUG"}, 
-            "019670": {"target": "513120", "index": "HK_DRUG"}, 
+            "019671": {"target": "513120", "index": "HK_DRUG"}, # 广发港股创新药C -> 恒生生物科技ETF
+            "019670": {"target": "513120", "index": "HK_DRUG"}, # 广发港股创新药A
             "006327": {"target": "159941", "index": "IXIC"},   
             "000834": {"target": "513500", "index": "SPX"},    
             "000001": {"target": "000001", "index": "000001"}  
@@ -551,6 +699,7 @@ class DataProvider:
             except: pass
         return pd.DataFrame()
 
+    # 代理 MarketProvider 的基础方法
     def fetch_history_kline(self, symbol, market="A", days=365):
         return self.market.fetch_history_kline(symbol, market=market, days=days)
 
@@ -560,8 +709,9 @@ class DataProvider:
     def get_exchange_rate(self, target_currency="CNY"):
         return self.market.get_exchange_rate(target_currency)
 
+    # 核心业务逻辑：获取基金持仓 (在此类中实现，不委托给 MarketProvider)
     def fetch_fund_portfolio(self, fund_code, years_to_try=2, force_update=False):
-        # 强制修正 6 位代码
+        # [Fix] 强制修正 6 位代码
         if str(fund_code).isdigit() and len(str(fund_code)) < 6:
             fund_code = str(fund_code).zfill(6)
             

@@ -1,4 +1,60 @@
-# deepseek_finance_project_V3/operation_logger.py
+"""
+==========================================================================================
+【文件定义】
+文件名: operation_logger.py
+类名  : OperationLogger
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. __init__(log_file)
+   [设置文件路径] -> [调用 ensure_log_file] -> [Ready]
+
+2. ensure_log_file
+   {File Exists?} -> (No: Call _write_header) -> [Print Created]
+
+3. _write_header
+   [Open File (Write Mode)] -> [CSV Writer] -> [Write Column Names]
+
+4. clear_logs
+   [Call _write_header (Overwrite)] -> [Print Success] -> [Return True]
+
+5. log_operation(operation_data)
+   [Extract Data Fields] -> [Build CSV Row] -> [Open File (Append Mode)]
+         ↓
+   [Write Row] -> [Print Success Msg] -> [Return True]
+
+6. quick_log_operation
+   [Init PM] -> [Get Portfolio Cash] -> [Input: Date, Symbol, Action, Amount]
+         ↓
+   [Input Optional: Shares, Price, Reason, AI Confidence, Notes]
+         ↓
+   [Snapshot Portfolio State] -> [Call log_operation]
+         ↓
+   [Ask Update Portfolio?] -> (Yes: Call update_portfolio_after_operation) -> [Return Data]
+
+7. update_portfolio_after_operation(operation_data, portfolio_manager)
+   [Unpack Data] -> [Load Portfolio Dict]
+         ↓
+   {Action?} -> (BUY/DCA: Decr Cash, Update/Add Position) / (SELL: Incr Cash, Decr Shares)
+         ↓
+   [PM.save_portfolio] -> [Print Success]
+
+8. batch_log_operations
+   [Loop: Call quick_log_operation] -> [Ask Continue?] -> [Return List]
+
+9. get_recent_operations(days)
+   [Read CSV] -> {Empty?} -> (Return [])
+         ↓
+   [Type Conversion (Amount/Shares/Price/Conf)] -> [Filter by Date]
+         ↓
+   [Convert to Dict Records] -> [Return List]
+
+10. get_operation_stats(days)
+    [Call get_recent_operations] -> [Calc Total Invested/Sold]
+         ↓
+    [Calc Net Flow] -> [Return Stats Dict]
+==========================================================================================
+"""
 
 import csv
 import os

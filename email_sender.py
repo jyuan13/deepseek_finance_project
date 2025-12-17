@@ -1,4 +1,43 @@
-# email_sender.py
+"""
+==========================================================================================
+【文件定义】
+文件名: email_sender.py
+类名  : EmailSender
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. __init__
+   [初始化 SMTP 配置] -> {Server: smtp.163.com, Port: 465}
+         ↓
+   [初始化凭证变量 (Email, Pass, Recipient) 为 None]
+
+2. setup_email_config
+   [尝试读取环境变量] -> {缺失?} -> (交互式输入: 账号/授权码/默认收件人)
+         ↓
+   [调用 test_connection] -> {连接成功?} -> [返回 True/False]
+
+3. test_connection
+   [建立 SMTP_SSL 连接] -> [尝试 Login 验证] -> [Quit 关闭连接]
+         ↓
+   (Catch Exception) -> [返回连接状态 True/False]
+
+4. send_analysis_report(recipient_email, symbol, analysis_result, ...)
+   {检查配置} -> [构建 MIMEMultipart] -> [渲染 HTML/Text 模板]
+         ↓
+   [SMTP_SSL 连接] -> [Login] -> [Send Message] -> [Quit]
+
+5. send_technical_chart(recipient_email, symbol, chart_filepath)
+   {检查配置} -> [读取 Chart 文件] -> [构建 MIMEApplication 附件]
+         ↓
+   [SMTP_SSL 连接] -> [Login] -> [Send Message] -> [Quit]
+
+6. set_default_recipient(recipient_email)
+   [接收参数] -> [更新 self.default_recipient]
+         ↓
+   [打印设置成功信息]
+==========================================================================================
+"""
+
 import smtplib
 from email.mime.text import MIMEText  # 修正：改为 MIMEText
 from email.mime.multipart import MIMEMultipart  # 修正：改为 MIMEMultipart

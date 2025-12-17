@@ -1,4 +1,34 @@
-# deepseek_finance_project_V3/prompt_builder.py
+"""
+==========================================================================================
+【文件定义】
+文件名: prompt_builder.py
+类名  : PromptBuilder
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. __init__(sentiment_engine, rag_engine)
+   [接收依赖注入] -> [赋值 self.sentiment, self.rag]
+         ↓
+   [初始化完成]
+
+2. build_macro_agent_prompt(macro_data, kronos_signal)
+   [输入: 宏观数据 + Kronos量化信号] -> [注入"宏观策略师" Persona]
+         ↓
+   [要求: 定性判断(牛/熊) + 风险提示] -> [返回 Prompt 字符串]
+
+3. build_sentiment_agent_prompt(news_list)
+   [输入: 新闻列表] -> [预处理: 切片前8条 & 格式化]
+         ↓
+   [注入"舆情风控官" Persona] -> [要求: 情绪评分(0-10) + 关键事件] -> [返回 Prompt]
+
+4. build_cio_agent_prompt(fund_ctx, macro_report, sentiment_report, risk_msg)
+   [聚合情报: 宏观 + 舆情 + 风控 + 标的实时状态]
+         ↓
+   [注入"首席投资官(CIO)" Persona] -> [嵌入决策逻辑 (风控否决/顺势/定投修正)]
+         ↓
+   [强制要求 JSON 格式输出] -> [返回最终决策 Prompt]
+==========================================================================================
+"""
 
 import json
 

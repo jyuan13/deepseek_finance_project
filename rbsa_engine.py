@@ -1,4 +1,28 @@
-# deepseek_finance_project_V3/rbsa_engine.py
+"""
+==========================================================================================
+【文件定义】
+文件名: rbsa_engine.py
+类名  : RBSAEngine
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. __init__(data_manager)
+   [接收 DB Manager] -> [初始化基准因子 (NASDAQ/SP500/HSI/CSI300/GOLD)]
+         ↓
+   [Ready]
+
+2. analyze_style(fund_code, lookback_days)
+   [DB Get Fund NAV] -> {Len < 30?} -> (Return {})
+         ↓
+   [Calc Fund Pct Change] -> [Loop Factors: Get Market Data] -> [Calc Factor Pct Change]
+         ↓
+   [Merge Data (Outer Join)] -> [FillNA (0)] -> (Fix Holiday Bias)
+         ↓
+   [Lasso Regression (Positive Constraint)] -> [Get Coefficients]
+         ↓
+   [Normalize Weights] -> [Filter Noise (<5%)] -> [Return Weights Dict]
+==========================================================================================
+"""
 
 import pandas as pd
 import numpy as np

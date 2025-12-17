@@ -1,303 +1,221 @@
-#!/usr/bin/env python3
 """
-DeepSeek Finance Project V3.25 (Local First Architecture)
+==========================================================================================
+【文件定义】
+文件名: main.py
+类名  : Main (Script)
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. check_dependencies
+   [打印提示] -> [Try Import akshare, baostock]
+          ↓
+   (Success: Return True) / (Fail: Print Error & Return False)
+
+2. print_banner
+   [OS Clear Screen] -> [Print ASCII Art Banner] -> [Print Version & Build Date]
+
+3. run_batch_update(fdm, pm)
+   [打印维护模式警告] -> [Input 确认 'y'] -> {不匹配则返回}
+          ↓
+   [PM.get_fund_positions] -> [Loop: 遍历所有基金]
+          ↓
+   [FDM.update_fund_holdings(force=True)] -> [Print 成功/失败]
+          ↓
+   [Print 统计结果]
+
+4. run_gui_build
+   [打印构建提示]
+          ↓
+   [构建 pyinstaller 指令]
+     --onefile (单文件)
+     --windowed (无黑框)
+     --distpath . (生成在根目录)
+     --clean (清理缓存)
+     portfolio_gui.py (入口文件)
+          ↓
+   [OS System Execute] -> [Check Return Code]
+          ↓
+   (Success: Print Path & Clean temp files) / (Fail: Print Error)
+
+5. main
+   [Check Dependencies] -> [Print Banner]
+          ↓
+   [Init Logger, DeepSeekClient, FDM, PM]
+          ↓
+   [Init FinancialAnalyzer (注入依赖)]
+          ↓
+   [While True Loop]
+     [Print Menu Options 1-7, 99, 0] -> [Input Choice]
+     [Case 1: analyzer.run_analysis_menu()] -> [运行时自动计算]
+     [Case 2: os.system("python portfolio_gui.py")] -> [启动 Lite 配置工具]
+     [Case 3: analyzer.manage_rag_system()] -> [原功能4上移]
+     [Case 4: analyzer._run_step_debug_mode()] -> [原功能5上移]
+     [Case 5: run_gui_build()] -> [原功能6上移]
+     [Case 6: run_batch_update(fdm, pm)] -> [原功能7上移]
+     [Case 7: APITester.run_menu()] -> [原功能8上移]
+     [Case 99: analyzer.perform_system_reset()]
+     [Case 0: Exit]
+     [Exception Handling]
+==========================================================================================
 """
 
 import os
 import sys
-import glob
+import time
 import shutil
-import subprocess
 from datetime import datetime
-from dotenv import load_dotenv
-
-load_dotenv()
-
 from deepseek_client import DeepSeekClient
 from fund_data_manager import FundDataManager
 from portfolio_manager import PortfolioManager
 from operation_logger import OperationLogger
 from finance_analyzer import FinancialAnalyzer
-from email_sender import EmailSender
-from data_manager import DataManager
-from api_tester import APITester  # [V3.26 新增]
+from api_tester import APITester
 
-# --- 版本控制 ---
-SYSTEM_VERSION = "V3.25"
-BUILD_DATE = "2025-12-04"
+class Colors:
+    HEADER = '\033[95m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    GREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
 
-# --- 全局日志系统 [V3.42 新增] ---
-class DualLogger(object):
-    """
-    双向日志记录器：同时将输出发送到 终端(stdout) 和 日志文件
-    """
-    def __init__(self, filename):
-        self.terminal = sys.stdout
-        self.log = open(filename, "a", encoding='utf-8')
-
-    def write(self, message):
-        self.terminal.write(message)
-        self.log.write(message)
-        self.log.flush()  # 确保实时写入，防止崩溃时丢失日志
-
-    def flush(self):
-        self.terminal.flush()
-        self.log.flush()
-
-def setup_global_logging():
-    """初始化全局日志记录，自动按日期+序号生成文件"""
-    log_dir = os.path.join("data", "log")
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
-
-    today = datetime.now().strftime("%Y%m%d")
-    
-    # 查找当天已有的日志文件，确定下一个序号
-    pattern = os.path.join(log_dir, f"{today}_*.txt")
-    existing_files = glob.glob(pattern)
-    
-    next_idx = 1
-    if existing_files:
-        indexes = []
-        for f in existing_files:
-            try:
-                # 解析文件名: 20251216_01.txt -> 01
-                basename = os.path.basename(f)
-                idx_str = basename.split('_')[1].split('.')[0]
-                indexes.append(int(idx_str))
-            except:
-                continue
-        if indexes:
-            next_idx = max(indexes) + 1
-            
-    filename = f"{today}_{next_idx:02d}.txt"
-    filepath = os.path.join(log_dir, filename)
-    
-    # 劫持标准输出和错误输出
-    sys.stdout = DualLogger(filepath)
-    sys.stderr = sys.stdout # 错误信息也记录到同一个文件
-    
-    print(f"📝 全局日志已启动: {filepath}")
+def check_dependencies():
+    print(f"{Colors.CYAN}🔄 正在自检核心数据源库 (AkShare/Baostock)...{Colors.ENDC}")
+    try:
+        import akshare
+        import baostock
+        print(f"   {Colors.GREEN}✅ 依赖库自检完毕{Colors.ENDC}")
+        return True
+    except ImportError as e:
+        print(f"   {Colors.FAIL}❌ 缺失依赖库: {e}{Colors.ENDC}")
+        return False
 
 def print_banner():
-    print("=" * 60)
-    print(f"    DeepSeek Finance Project {SYSTEM_VERSION} (Local First)")
-    print(f"    Architecture: Offline-First / Manual-Update Workflow")
-    print(f"    Build Date: {BUILD_DATE}")
-    print("=" * 60)
-
-def auto_update_libs():
-    """
-    [V3.13] 启动时自动更新关键数据源库 (AkShare/Baostock)
-    防止因数据源接口变更导致获取失败
-    """
-    target_libs = ["akshare", "baostock"]
-    print("\n🔄 正在自检核心数据源库 (AkShare/Baostock)...")
-    print("   (使用 pypi.org 简易源，如果网络不通请手动更新)")
-    
-    for lib in target_libs:
-        try:
-            # 构造 pip 更新指令
-            # pip install --upgrade package -i https://pypi.org/simple
-            cmd = [
-                sys.executable, "-m", "pip", "install", 
-                "--upgrade", lib, 
-                "-i", "https://pypi.org/simple"
-            ]
-            
-            # 使用 subprocess 调用，静默输出，仅在报错时提示
-            subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception as e:
-            print(f"   ⚠️ {lib} 自动更新失败: {e} (可忽略，继续运行)")
-    
-    print("   ✅ 依赖库自检完毕")
-
-def build_gui_tool():
-    print("\n🔨 正在构建持仓配置工具 (EXE)...")
-    script_name = "portfolio_gui.py"
-    if not os.path.exists(script_name):
-        print(f"❌ 错误: 未找到 {script_name} 文件。")
-        print("   请确保 portfolio_gui.py 存在于项目根目录下。")
-        return
-
-    # 打包指令
-    cmd = f'pyinstaller --onefile --windowed --name="持仓配置小工具" --clean {script_name}'
-    
-    print(f"⚡ 执行指令: {cmd}")
-    print("⏳ 正在打包，这可能需要几分钟，请耐心等待...")
-    
-    try:
-        # shell=True 确保在 Windows/Linux 下都能找到命令
-        ret = subprocess.call(cmd, shell=True)
-        
-        if ret == 0:
-            print("\n✅ 构建成功！正在部署...")
-            root_dir = os.getcwd()
-            dist_dir = os.path.join(root_dir, "dist")
-            exe_name = "持仓配置小工具.exe"
-            src_exe = os.path.join(dist_dir, exe_name)
-            dst_exe = os.path.join(root_dir, exe_name)
-            
-            if os.path.exists(src_exe):
-                if os.path.exists(dst_exe):
-                    os.remove(dst_exe) # 删除旧版
-                shutil.move(src_exe, dst_exe)
-                print(f"📂 EXE 已移动到项目根目录: {dst_exe}")
-                
-                # 清理垃圾文件 (可选)
-                print("🧹 清理构建临时文件...")
-                try:
-                    if os.path.exists("build"): shutil.rmtree("build")
-                    if os.path.exists("dist"): shutil.rmtree("dist")
-                    if os.path.exists("持仓配置小工具.spec"): os.remove("持仓配置小工具.spec")
-                except:
-                    pass
-                    
-                print("✨ 一切就绪！您可以直接在文件夹中双击运行 '持仓配置小工具.exe'")
-            else:
-                print(f"⚠️ 未在 dist 目录找到 {exe_name}，请手动检查。")
-        else:
-            print("❌ 构建失败，请检查上方报错信息。")
-            print("💡 提示: 请确认已安装 pyinstaller (pip install pyinstaller)")
-            
-    except Exception as e:
-        print(f"❌ 发生异常: {e}")
+    os.system('cls' if os.name == 'nt' else 'clear')
+    print(f"{Colors.BLUE}")
+    print(r"""
+  ____                  ____            _    
+ |  _ \  ___  ___ _ __ / ___|  ___  ___| | __
+ | | | |/ _ \/ _ \ '_ \\___ \ / _ \/ _ \ |/ /
+ | |_| |  __/  __/ |_) |___) |  __/  __/   < 
+ |____/ \___|\___| .__/|____/ \___|\___|_|\_\
+                 |_|                         
+    """)
+    print(f"{Colors.HEADER}    DeepSeek Finance Project V4.00 (Streamlined){Colors.ENDC}")
+    print(f"    Architecture: Lite Config Tool / Runtime Analysis Engine")
+    print(f"    Build Date: {datetime.now().strftime('%Y-%m-%d')}")
+    print("============================================================")
 
 def run_batch_update(fdm, pm):
-    """[V3.25] 批量更新本地持仓数据"""
-    print("\n🔄 [维护模式] 开始更新本地持仓数据库...")
-    print("⚠️  注意: 此操作会联网下载所有持仓基金的最新季度持仓，可能耗时较长。")
-    confirm = input("确认开始更新吗? (y/n): ").strip().lower()
-    if confirm != 'y': return
-
-    positions = pm.get_current_positions()
-    if not positions:
-        print("❌ 无持仓配置")
-        return
-
-    total = len(positions)
+    print(f"\n{Colors.WARNING}🔄 [维护模式] 开始更新本地持仓数据库...{Colors.ENDC}")
+    if input(f"{Colors.BOLD}确认开始更新吗? (y/n): {Colors.ENDC}").lower() != 'y': return
+    funds = pm.get_fund_positions()
+    total = len(funds)
     print(f"\n📋 共有 {total} 只标的待更新...")
+    for i, fund in enumerate(funds):
+        code = fund['symbol']
+        print(f"   [{i+1}/{total}] 正在更新 {code} ...", end="", flush=True)
+        try:
+            fdm.update_fund_holdings(code, force_update=True)
+            print(f"\r   [{i+1}/{total}] {Colors.GREEN}✅ 更新成功: {code}{Colors.ENDC}          ")
+        except Exception as e:
+            print(f"\r   [{i+1}/{total}] {Colors.FAIL}❌ 更新失败 {code}: {str(e)[:50]}{Colors.ENDC}")
+    input("\n按回车键继续...")
+
+def run_gui_build():
+    print(f"\n{Colors.CYAN}🔨 正在构建轻量级配置工具 (EXE -> 根目录)...{Colors.ENDC}")
     
-    for i, pos in enumerate(positions):
-        code = pos['symbol']
-        print(f"   [{i+1}/{total}] 正在更新 {code} ...")
-        # 强制 force_update=True，触发联网下载并覆盖本地 CSV
-        fdm.update_fund_holdings(code, force_update=True)
-        
-    print(f"\n✅ 全部 {total} 只标的更新完毕！")
-    print("   现在运行 '1. 持仓分析' 将直接读取本地数据，速度极快且无须联网。")
+    # [V4.0] 极简构建指令：不打包 pandas/akshare，体积 < 15MB
+    cmd = 'pyinstaller --onefile --windowed --name="持仓配置小工具" --clean --distpath . portfolio_gui.py'
+    
+    print(f"⚡ 执行指令: {cmd}")
+    print(f"{Colors.WARNING}⏳ 正在打包 (预计 10-20秒)...{Colors.ENDC}")
+    
+    ret = os.system(cmd)
+    
+    if ret == 0:
+        print(f"\n{Colors.GREEN}✅ 构建成功！{Colors.ENDC}")
+        print(f"📂 文件位置: {os.path.abspath('持仓配置小工具.exe')}")
+        # 清理垃圾
+        print("🧹 正在清理临时文件...")
+        try:
+            if os.path.exists("build"): shutil.rmtree("build")
+            if os.path.exists("持仓配置小工具.spec"): os.remove("持仓配置小工具.spec")
+            print("✨ 清理完成")
+        except: pass
+    else:
+        print(f"\n{Colors.FAIL}❌ 构建失败 (Code: {ret}){Colors.ENDC}")
+        print("请确保已安装: pip install pyinstaller")
+    
+    input("\n按回车键返回...")
 
 def main():
-    # [V3.13] 启动前先检查更新
-    auto_update_libs()
-    
+    if not check_dependencies(): return
     print_banner()
-    
-    # --- 用户配置区 ---
-    # 在这里修改默认首选 AI ( "qwen" 或 "deepseek" )
-    PREFERRED_PROVIDER = "deepseek" 
-    # ------------------
-
-    qwen_key = os.environ.get("Qwen_API_KEY") or os.environ.get("DASHSCOPE_API_KEY")
-    deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
-    
-    api_key = None
-    provider = PREFERRED_PROVIDER
-    
-    # 智能 Key 选择逻辑
-    if PREFERRED_PROVIDER == "qwen" and qwen_key:
-        print("✅ 检测到 Qwen API Key，激活 Qwen-Plus 思考模式...")
-        api_key = qwen_key
-        provider = "qwen"
-    elif PREFERRED_PROVIDER == "deepseek" and deepseek_key:
-        print("✅ 检测到 DeepSeek API Key...")
-        api_key = deepseek_key
-        provider = "deepseek"
-    # 如果首选不可用，尝试备选
-    elif qwen_key:
-        print("⚠️ 首选 API 未找到，自动切换至 Qwen...")
-        api_key = qwen_key
-        provider = "qwen"
-    elif deepseek_key:
-        print("⚠️ 首选 API 未找到，自动切换至 DeepSeek...")
-        api_key = deepseek_key
-        provider = "deepseek"
-    else:
-        print("⚠️  未检测到任何 API Key")
-        provider_input = input("请手动选择提供商 [1] Qwen / [2] DeepSeek: ").strip()
-        if provider_input == "2":
-            provider = "deepseek"
-            api_key = input("API Key: ").strip()
-        else:
-            provider = "qwen"
-            api_key = input("API Key: ").strip()
-
-    try:
-        client = DeepSeekClient(api_key=api_key, provider=provider)
-        print(f"🚀 服务已连接: {provider.upper()} ({client.models['chat']})")
+    logger = OperationLogger()
+    try: client = DeepSeekClient()
     except Exception as e:
-        print(f"❌ AI 初始化失败: {e}")
+        print(f"{Colors.FAIL}❌ DeepSeek 客户端初始化失败: {e}{Colors.ENDC}")
         return
 
-    try:
-        dm = DataManager()
-        fdm = FundDataManager()
-    except Exception as e:
-        print(f"❌ 数据层初始化失败: {e}")
-        return
-
-    try:
-        pm = PortfolioManager()
-        logger = OperationLogger()
-        email_sender = EmailSender()
-        tester = APITester() # [V3.26] 初始化接口测试器
-    except Exception as e:
-        print(f"❌ 业务层初始化失败: {e}")
-        return
-    
-    try:
-        analyzer = FinancialAnalyzer(client, fdm, pm, logger)
-        if not analyzer.kronos.is_active:
-            print("⚠️  Kronos 模型未就绪 (请确保 'model' 文件夹存在)")
-        else:
-            print("✅ Kronos 预测引擎已就绪")
-    except Exception as e:
-        print(f"❌ 分析器初始化失败: {e}")
-        return
+    print("⏳ 正在初始化数据引擎...")
+    fdm = FundDataManager()
+    pm = PortfolioManager()
+    analyzer = FinancialAnalyzer(client, fdm, pm, logger)
+    time.sleep(0.5)
 
     while True:
-        print("\n" + "="*30 + f" 主菜单 ({SYSTEM_VERSION}) " + "="*30)
-        print("1. 🚀 智能金融分析 (读取本地持仓)")
-        print("2. 💼 投资组合管理")
-        print("3. 📝 记录交易操作")
-        print("4. 🧠 RAG 知识库管理")
-        print("5. 🐞 分步调试模式")
-        print("6. 🛠️ 构建持仓配置工具 (EXE)")
-        print("-" * 66)
-        print("7. 🔄 更新持仓数据 (维护模式 - 联网下载)")
-        print("8. 🔌 接口连通性测试")
-        print("-" * 66)
+        print_banner()
+        print(f"{Colors.BOLD}功能菜单:{Colors.ENDC}")
+        print("1. 🚀 智能金融分析 (运行时自动计算份额/净值)")
+        print("2. 💼 投资组合管理 (Lite GUI)")
+        print("3. 🧠 RAG 知识库管理")
+        print("4. 🐞 分步调试模式")
+        print("5. 🛠️ 构建配置工具 (Lite EXE)")
+        print("-" * 60)
+        print("6. 🔄 更新持仓数据")
+        print("7. 🔌 接口连通性测试")
+        print("-" * 60)
         print("99. 🧹 系统重置")
         print("0.  退出")
-        print("=" * 66)
+        print("============================================================")
         
-        choice = input("指令 > ").strip()
+        choice = input(f"{Colors.CYAN}指令 > {Colors.ENDC}").strip()
         
-        if choice == "1": analyzer.run_analysis_menu()
-        elif choice == "2": pm.manage_portfolio()
-        elif choice == "3": logger.quick_log_operation()
-        elif choice == "4": analyzer.manage_rag_system()
-        elif choice == "5": analyzer._run_step_debug_mode()
-        elif choice == "6": build_gui_tool()
-        elif choice == "7": run_batch_update(fdm, pm)
-        elif choice == "8": tester.run_menu() # [V3.26] 调用测试菜单
-        elif choice == "99": analyzer.perform_system_reset()
-        elif choice == "0":
-            print("👋 再见！")
+        try:
+            if choice == "1": 
+                analyzer.run_analysis_menu()
+                input("\n按回车键返回...")
+            elif choice == "2": 
+                print(f"{Colors.GREEN}🚀 正在启动 GUI 配置工具...{Colors.ENDC}")
+                os.system("python portfolio_gui.py")
+            elif choice == "3": 
+                analyzer.manage_rag_system()
+            elif choice == "4": 
+                analyzer._run_step_debug_mode()
+                input("\n按回车键返回...")
+            elif choice == "5": 
+                run_gui_build()
+            elif choice == "6": 
+                run_batch_update(fdm, pm)
+            elif choice == "7": 
+                tester = APITester()
+                tester.run_menu()
+            elif choice == "99": 
+                analyzer.perform_system_reset()
+            elif choice == "0": 
+                sys.exit()
+            else: 
+                print(f"{Colors.FAIL}❌ 无效指令{Colors.ENDC}")
+        except KeyboardInterrupt: 
             break
-        else:
-            print("❌ 无效输入")
+        except Exception as e: 
+            print(f"\n{Colors.FAIL}❌ 异常: {e}{Colors.ENDC}")
+            import traceback
+            traceback.print_exc()
+            input()
 
 if __name__ == "__main__":
-    setup_global_logging() # [V3.42] 启动日志记录
     main()

@@ -1,4 +1,59 @@
-# deepseek_finance_project_V3/api_tester.py
+"""
+==========================================================================================
+【文件定义】
+文件名: api_tester.py
+类名  : APITester
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. __init__
+   [环境变量读取] -> {构建 keys 字典} -> (FMP, AV, TwelveData, Finnhub)
+           ↓
+   [self.keys 赋值完成]
+
+2. _print_result(name, status, msg, time_cost)
+   [清除当前行进度] -> {判断 Status} -> (设置颜色: Green/Red/Yellow)
+                           ↓
+   [截断过长 Msg] -> [格式化输出: Status + Name + Time + Msg]
+
+3. run_menu
+   [Loop: While True] -> [打印菜单选项 0-9] -> [获取用户 Input]
+           ↓
+   {Switch/Case 分发} -> (调用对应 test_xxx 函数) OR (Break 退出)
+
+4. _run_test(name, func, *args)
+   [打印"⏳"进度] -> [Time Start] -> (执行 func(*args)) -> [Time End]
+                                           ↓
+   {Catch Exception?} -> (Error Msg) -> [调用 _print_result(NOK)]
+           ↓ No Error
+   {Result Valid?} -> (Check Empty/None) -> [调用 _print_result(OK/NOK)]
+
+5. test_akshare
+   [Seq: 顺序执行] -> (A股/港股快照) -> (基金持仓/净值/档案) -> (宏观/美股/舆情)
+           ↓
+   [每个子项] -> 调用 self._run_test() -> [输出单项结果]
+
+6. test_yfinance
+   [内部定义 Helper] -> (test_yf_ticker: 快照) / (test_yf_hist: 历史)
+           ↓
+   [调用 self._run_test] -> {网络超时检查} -> [输出结果]
+
+7. test_baostock
+   [BS Login] -> {登录成功?} -> [Query K-Line Data] -> [Loop: 解析数据]
+         ↓            ↓                  ↓
+   [BS Logout (Finally)] <---------- (收集结果) -> [Return List]
+
+8. test_ddg
+   [Init DDGS Context] -> (调用 ddgs.text 搜索 "OpenAI")
+           ↓
+   [List 转换] -> [Return Top 3 Results] -> [调用 _run_test]
+
+9. test_commercial_apis
+   [Seq: 遍历 FMP/AV/TD/FH] -> {Check self.keys?} -> (有Key: 发送 Request)
+                                       ↓ No Key
+                                  [Skip Test]
+==========================================================================================
+"""
 
 import os
 import time
@@ -7,7 +62,7 @@ import pandas as pd
 import akshare as ak
 import baostock as bs
 import yfinance as yf
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 import urllib3
 import logging
 from datetime import datetime

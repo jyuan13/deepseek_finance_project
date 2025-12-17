@@ -1,3 +1,65 @@
+"""
+==========================================================================================
+【文件定义】
+文件名: market_engine_v5.py
+类名  : DeepSeekMarketEngineV5
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. __init__(tushare_token, deepseek_client, rag_persist_dir)
+   [初始化子引擎] -> (Macro, ETF, Sentiment, Evolution, RAG, DarkFlow, Prompt)
+         ↓
+   [Ready]
+
+2. analyze_market_context(indices_config)
+   [MacroAnalyzer Calls] -> (Liquidity + CrossBorder + Indices Trend)
+         ↓
+   [Market Breadth Calc] -> [Return Market Context Dict]
+
+3. analyze_etf_targets(etf_list)
+   [ETFAnalyzer Analysis] -> [Loop ETFs]
+         ↓
+   [DarkFlowDetector Analysis] -> [Merge Data] -> [Return Analysis Dict]
+
+4. get_rag_context(etf_list, market_context)
+   [Loop ETFs] -> [RAG Engine Query (Symbol+Sector+Macro)]
+         ↓
+   [Aggregate Context] -> [Return Dict]
+
+5. get_comprehensive_analysis(indices_config, etf_list)
+   [Parallel Calls: Market Context, ETF Analysis, Sentiment, RAG Context]
+         ↓
+   [Aggregate All Data + Timestamp] -> [Return Huge Dict]
+
+6. generate_analysis_prompt(indices_config, etf_list)
+   [Call get_comprehensive_analysis] -> [Evolution Engine Get Wisdom]
+         ↓
+   [Prompt Builder Build Prompt] -> [Return String]
+
+7. log_predictions(etf_list, ai_responses)
+   [Get Current Analysis] -> [Loop ETFs]
+         ↓
+   [Evolution Engine Log Prediction] -> [RAG Engine Memorize State]
+
+8. verify_historical_predictions(days_ago)
+   [Evolution Engine Verify] -> [Update RAG Memory (Optional)]
+         ↓
+   [Return Verification Results]
+
+9. get_rag_stats
+   [Call RAG Engine Stats] -> [Return Dict]
+
+10. get_performance_report
+    [Call Evolution Engine Report] -> [Return Dict]
+
+11. _get_market_breadth(indices_config)
+    [Placeholder Logic] -> [Return Breadth Dict]
+
+12. close
+    [Close Evolution Engine Connection]
+==========================================================================================
+"""
+
 import datetime
 from typing import Dict, Any, List
 

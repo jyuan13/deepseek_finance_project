@@ -1,4 +1,33 @@
-# deepseek_finance_project_V3/shadow_engine.py
+"""
+==========================================================================================
+【文件定义】
+文件名: shadow_engine.py
+类名  : ShadowEngine
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. __init__(fund_data_manager, rbsa_engine)
+   [依赖注入] -> [赋值 self.fdm, self.rbsa]
+         ↓
+   [Ready]
+
+2. _fetch_stock_change(stock)
+   [FDM 获取实时快照] -> {Valid?} -> (No: Return FAIL)
+         ↓
+   [Calc Pct Change] -> [Return Name/Weight/Chg/Source/Status]
+
+3. calc_realtime_nav(fund_code, fund_holdings)
+   {Empty Holdings?} -> (Return 0.0)
+         ↓
+   [ThreadPoolExecutor] -> [并发提交 _fetch_stock_change]
+         ↓
+   [Loop Futures] -> [Collect Results] -> [Accumulate Weighted Sum]
+         ↓
+   [Print Detailed List] -> [Calc Average Change]
+         ↓
+   [Apply Correction Factor (0.6/0.85/0.95)] -> [Return Final Change, Basis Msg]
+==========================================================================================
+"""
 
 import pandas as pd
 from datetime import datetime

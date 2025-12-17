@@ -1,4 +1,42 @@
-# deepseek_finance_project_V2/etf_analyzer.py
+"""
+==========================================================================================
+【文件定义】
+文件名: etf_analyzer.py
+类名  : ETFAnalyzer
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. __init__(tushare_token)
+   {Has Token?} -> [Init Tushare Pro API]
+        ↓
+   [Set self.pro] -> [Ready]
+
+2. analyze_etf_targets(etf_list)
+   [Loop ETF List] -> [Unpack Symbol/Market]
+        ↓
+   [Call: Valuation + Growth + Consensus + Commodity] -> [Aggregate Data]
+        ↓
+   [Return Results Dict]
+
+3. _get_etf_valuation(symbol, market)
+   [Init Default N/A] -> {Market==CN?} -> (Try AKShare Fund Val)
+        ↓
+   {Data Missing?} -> (Try Tushare Daily Basic) -> [Update PE/PB/Div] -> [Return Data]
+
+4. _get_underlying_growth(symbol, market)
+   [Return Placeholder Dict] (TODO: Implementation)
+
+5. _get_analyst_consensus(symbol, market)
+   {CN?} -> [TS Fund Portfolio] -> [Get Top Stock] -> [TS Forecast]
+        ↓
+   {US?} -> [YF Ticker] -> [Get Recommendations] -> [Return Consensus]
+
+6. _get_related_commodity(sector_type)
+   [Map Sector -> Ticker] -> {Target Exists?}
+        ↓
+   [YF History(5d)] -> [Get Last Close] -> [Return {Target: Price}]
+==========================================================================================
+"""
 
 import tushare as ts
 import yfinance as yf

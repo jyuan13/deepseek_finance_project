@@ -1,3 +1,58 @@
+"""
+==========================================================================================
+【文件定义】
+文件名: sentiment_engine.py
+类名  : SentimentEngine
+==========================================================================================
+【函数清单与逻辑流 (Function Logic Flow)】
+
+1. __init__(tushare_token)
+   [Init TS Pro API (Optional)] -> [Define Sector Keywords Dict]
+         ↓
+   [Ready]
+
+2. get_sentiment_data(target_symbols)
+   [Call _get_policy_signals] -> [Call _get_market_rumors]
+         ↓
+   [Call _get_sector_specific_news] -> [Call _get_sentiment_indicators]
+         ↓
+   [Call _get_retail_attention (if targets)] -> [Aggregate & Return Dict]
+
+3. _get_policy_signals
+   [Loop: Today & Yesterday] -> [Try AKShare CCTV News] -> {Success?}
+         ↓
+   (Yes: Extract Top 3 Titles) -> (No: Append Error Msg) -> [Return List]
+
+4. _get_market_rumors
+   [Try AKShare CLS Tease] -> [Filter Keywords (Macro/Fed/Rate)]
+         ↓
+   [Simplify Content] -> [Return List (Top 8)]
+
+5. _get_sector_specific_news
+   [Try AKShare Industry News] -> [Loop Sectors] -> [Match Keywords in Title]
+         ↓
+   [Collect Matches] -> [Return Dict]
+
+6. _get_sentiment_indicators
+   [Try AKShare Emotion Index] -> [Extract Score/Level] -> [Return Dict]
+
+7. _get_retail_attention(target_symbols)
+   [Try AKShare Hot Rank] -> [Get Top 5 Market Hottest]
+         ↓
+   [Loop Targets] -> {In Rank List?}
+         ↓
+   (Yes: Get Rank & Status 'Overheated/Hot') / (No: Status 'Cold') -> [Return Dict]
+
+8. generate_nlp_prompt_segment(my_etf_list)
+   [Extract Symbols] -> [Call get_sentiment_data]
+         ↓
+   [Format Sub-sections (Policy/Rumors/Retail/Indicators/Sector)] -> [Return Prompt String]
+
+9. _format_list / _format_retail_attention / _format_sentiment_indicators / _format_sector_news
+   [Helper Formatters] -> [Convert Data Structures to Readable Strings]
+==========================================================================================
+"""
+
 import akshare as ak
 import tushare as ts
 import datetime
