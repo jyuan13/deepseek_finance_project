@@ -103,7 +103,7 @@ def print_banner():
  |____/ \___|\___| .__/|____/ \___|\___|_|\_\
                  |_|                         
     """)
-    print(f"{Colors.HEADER}    DeepSeek Finance Project V4.00 (Streamlined){Colors.ENDC}")
+    print(f"{Colors.HEADER}    DeepSeek Finance Project V4.01 (Streamlined){Colors.ENDC}")
     print(f"    Architecture: Lite Config Tool / Runtime Analysis Engine")
     print(f"    Build Date: {datetime.now().strftime('%Y-%m-%d')}")
     print("============================================================")

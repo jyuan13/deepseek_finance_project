@@ -6,46 +6,6 @@
 文件名: finance_report.py
 类名  : FinanceReporter
 ==========================================================================================
-【函数清单与逻辑流 (Function Logic Flow)】
-
-1. __init__
-   [初始化报告目录] -> [创建 data 文件夹]
-
-2. generate_html_card(data_json)
-   [接收单只标的分析结果]
-          ↓
-   [解析信号颜色 _get_signal_style] -> (Fix: 增强关键词匹配，确保买入变红)
-          ↓
-   [构建 HTML 卡片] -> (包含: 标题, 核心指标, AI建议, 理由, 风险提示)
-          ↓
-   [返回 HTML 字符串]
-
-3. print_console_summary(data)
-   [控制台打印简报] -> (用于运行时快速查看)
-
-4. generate_unified_report(macro_data, cards_html)
-   [接收宏观数据 & 所有标的卡片]
-          ↓
-   [构建 HTML 头部 (CSS样式, 强制UTF-8)]
-          ↓
-   [生成宏观概览区域 _render_macro_section] -> (Fix: 补全中文映射 US_10Y等)
-          ↓
-   [拼接标的分析卡片]
-          ↓
-   [写入 HTML 文件] -> [自动打开浏览器]
-
-5. save_report(symbol, html_content)
-   [保存单只标的报告]
-
-6. _get_signal_style(signal)
-   [Helper] -> [根据 Buy/Sell/Hold 返回 CSS] -> (Red/Green/Orange)
-
-7. _render_macro_section(macro_data)
-   [Helper] -> [生成宏观环境表格 + Kronos 5日详情表]
-
-8. _render_kronos_table(details)
-   [Helper] -> [生成 Kronos 预测数据表格]
-==========================================================================================
 """
 
 import os
@@ -56,11 +16,10 @@ from datetime import datetime
 class FinanceReporter:
     """
     负责生成可视化分析报告 (HTML/Console)
-    [V4.06 Final Fix]
-    1. 修复 HTML 渲染格式错误
-    2. 增强 Kronos 5日预测展示
-    3. 彻底修复买入信号颜色 (红色)
-    4. 补全所有宏观指标汉化
+    [V4.10 Final Fix]
+    1. 新增: 每个标的卡片支持显示 5日趋势预测详情表 (forecast_df)
+    2. 优化: 统一表格样式，支持 DataFrame 和 List[Dict] 格式
+    3. 修复: 买入/卖出信号颜色适配 A股习惯 (红涨绿跌)
     """
     def __init__(self, output_dir="data"):
         self.output_dir = output_dir
@@ -90,17 +49,72 @@ class FinanceReporter:
         # 橙色/灰色 (持有/观望)
         return "background-color: #fff3e0; color: #ef6c00; border: 1px solid #ffe0b2;"
 
+    def _df_to_html_table(self, df_data):
+        """
+        [新增] 将预测 DataFrame (或字典列表) 转换为 HTML 表格
+        """
+        if df_data is None:
+            return ""
+            
+        # 兼容性处理: 如果是 DataFrame，先转为 list of dict
+        data_list = df_data
+        if hasattr(df_data, 'to_dict'):
+            data_list = df_data.to_dict(orient='records')
+        
+        if not isinstance(data_list, list) or len(data_list) == 0:
+            return ""
+
+        html = '<div class="table-responsive mt-3 mb-2">'
+        html += '<h6 class="text-muted mb-2" style="font-size: 0.9rem;">📉 未来5日趋势预测 (Trend Forecast)</h6>'
+        html += '<table class="table table-sm table-bordered table-hover" style="font-size: 0.85rem; text-align: center;">'
+        
+        # 表头
+        html += '<thead class="thead-light"><tr>'
+        html += '<th>日期 (Date)</th><th>预测价 (Forecast)</th><th>累计涨跌 (Cum Chg%)</th>'
+        html += '</tr></thead><tbody>'
+
+        for i, row in enumerate(data_list):
+            # 1. 处理日期
+            # 优先取 'date', 其次 'ds', 再次用 T+n
+            date_val = row.get('date', row.get('ds', f"T+{i+1}"))
+            # 如果是 timestamp 对象，转字符串
+            if hasattr(date_val, 'strftime'):
+                date_val = date_val.strftime('%m-%d')
+            else:
+                date_val = str(date_val)[:10]
+
+            # 2. 处理价格 (close 或 yhat)
+            price_val = row.get('close', row.get('yhat', 0))
+            try: 
+                price_str = f"{float(price_val):.2f}"
+            except: 
+                price_str = str(price_val)
+            
+            # 3. 处理涨跌幅 (cum_pct_chg)
+            chg_val = row.get('cum_pct_chg', 0)
+            try:
+                chg_float = float(chg_val)
+                sign = "+" if chg_float >= 0 else ""
+                # A股习惯: 红涨绿跌
+                color_class = "text-danger" if chg_float >= 0 else "text-success"
+                chg_str = f'<span class="{color_class} font-weight-bold">{sign}{chg_float:.2f}%</span>'
+            except:
+                chg_str = str(chg_val)
+
+            html += f'<tr><td>{date_val}</td><td>{price_str}</td><td>{chg_str}</td></tr>'
+
+        html += '</tbody></table></div>'
+        return html
+
     def _render_kronos_table(self, details):
-        """生成 Kronos 5日预测详情表"""
+        """生成宏观界面的 Kronos 综合预测表 (保持原样或复用逻辑)"""
         if not details or not isinstance(details, list):
             return "<p class='text-muted ml-3'>⚠️ 暂无详细预测数据</p>"
             
         rows = ""
         for item in details:
-            # item: {'name': '...', 'date': 'T+1', 'close': '...', 'chg': '...', 'conf': ...}
             chg_str = str(item.get('chg', '0%'))
             
-            # 涨跌颜色判断
             is_up = False
             if "+" in chg_str: is_up = True
             elif "%" in chg_str:
@@ -109,7 +123,8 @@ class FinanceReporter:
                     if val > 0: is_up = True
                 except: pass
             
-            color_style = "color: #d32f2f;" if is_up else "color: #388e3c;" # 红涨绿跌
+            # 红涨绿跌
+            color_style = "color: #d32f2f;" if is_up else "color: #388e3c;"
             
             rows += f"""
             <tr>
@@ -128,7 +143,7 @@ class FinanceReporter:
             
         return f"""
         <div class="kronos-section mt-3">
-            <h5 class="mb-3">🤖 Kronos AI 未来5日趋势预测 (Trend Forecast)</h5>
+            <h5 class="mb-3">🤖 Kronos AI 综合预测 (Global Forecast)</h5>
             <div class="table-responsive">
                 <table class="table table-sm table-hover table-bordered">
                     <thead class="thead-light">
@@ -149,8 +164,7 @@ class FinanceReporter:
         """
 
     def _render_macro_section(self, macro_data):
-        """生成宏观数据面板 (全量汉化)"""
-        # 中文名称映射表
+        """生成宏观数据面板"""
         name_map = {
             "Nasdaq": "纳斯达克 (Nasdaq)",
             "SP500": "标普500 (S&P 500)",
@@ -168,24 +182,21 @@ class FinanceReporter:
         items_html = ""
         kronos_details = []
         
-        # 遍历宏观数据
         for k, v in macro_data.items():
             if k == "Kronos_Detail":
                 kronos_details = v
                 continue
             
-            # 跳过太长的文本描述，只展示指标
             if k == "Kronos_Prediction" and len(str(v)) > 20:
                 v = "请查看下方详情表"
 
             display_name = name_map.get(k, k)
             
-            # 简单的颜色标记
             val_str = str(v)
             badge_class = "secondary"
-            if "Bull" in val_str or "Strong" in val_str: badge_class = "danger" # 红
-            elif "Bear" in val_str: badge_class = "success" # 绿
-            elif "Consolidation" in val_str: badge_class = "warning" # 黄
+            if "Bull" in val_str or "Strong" in val_str: badge_class = "danger" # Red
+            elif "Bear" in val_str: badge_class = "success" # Green
+            elif "Consolidation" in val_str: badge_class = "warning" # Orange
             
             items_html += f"""
             <div class="col-md-3 col-sm-6 mb-3">
@@ -198,7 +209,6 @@ class FinanceReporter:
             </div>
             """
             
-        # 生成 Kronos 表格
         kronos_html = self._render_kronos_table(kronos_details)
         
         return f"""
@@ -209,7 +219,7 @@ class FinanceReporter:
         """
 
     def generate_html_card(self, data):
-        """生成单个标的的 HTML 卡片"""
+        """生成单个标的的 HTML 卡片 (包含 5日预测表)"""
         signal_style = self._get_signal_style(data.get('signal', 'HOLD'))
         
         fund_name = data.get('fund_name', 'Unknown')
@@ -221,7 +231,12 @@ class FinanceReporter:
         comment = data.get('comment', '')
         risk_msg = data.get('risk_msg', '')
         
-        # 风险提示样式
+        # [修改点] 渲染 5日预测表格
+        forecast_html = ""
+        if 'forecast_df' in data:
+            forecast_html = self._df_to_html_table(data['forecast_df'])
+        
+        # 风险提示
         risk_html = ""
         if risk_msg and risk_msg != 'None' and risk_msg != '':
             risk_html = f"""
@@ -263,6 +278,8 @@ class FinanceReporter:
                     </div>
                 </div>
                 
+                {forecast_html}
+                
                 {risk_html}
             </div>
         </div>
@@ -273,10 +290,7 @@ class FinanceReporter:
         filename = f"Daily_Report_{datetime.now().strftime('%Y%m%d')}.html"
         filepath = os.path.join(self.output_dir, filename)
         
-        # 1. 生成宏观部分
         macro_html = self._render_macro_section(macro_context)
-        
-        # 2. 拼接卡片
         cards_html = "\n".join(report_cards)
         
         html_template = f"""
@@ -288,6 +302,7 @@ class FinanceReporter:
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>每日金融分析日报 - {datetime.now().strftime('%Y-%m-%d')}</title>
             <link href="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/4.6.2/css/bootstrap.min.css" rel="stylesheet">
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
             <style>
                 body {{ background-color: #f4f6f9; font-family: 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif; }}
                 .container {{ max-width: 1000px; margin-top: 40px; margin-bottom: 60px; }}

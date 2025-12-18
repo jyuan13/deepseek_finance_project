@@ -150,25 +150,24 @@ from threading import Lock
 import logging
 import urllib3
 import warnings
+import ssl
 
 # [V3.61 终极稳定版] 
 # 1. 集成 ETF 穿透映射 (Smart Mapping)
 # 2. 修复 AkShare 港股历史数据接口报错 (移除 qfq)
 # 3. 修复 Yahoo Finance 空值异常
 # 4. 包含完整的 News, Market, DataProvider 逻辑
-
+ssl._create_default_https_context = ssl._create_unverified_context
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
+
 # warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 # 暴力超时补丁: 强制所有 requests 请求至少等待 300秒
 _orig_request = requests.Session.request
 def _patched_request(self, method, url, *args, **kwargs):
-    timeout = kwargs.get("timeout")
-    if timeout is None:
-        kwargs["timeout"] = 300
-    elif isinstance(timeout, (int, float)) and timeout < 300:
-        kwargs["timeout"] = 300
+    kwargs["timeout"] = kwargs.get("timeout", 30) # 默认30秒
+    kwargs["verify"] = False  # [Critical] 强制关闭 SSL 验证
     return _orig_request(self, method, url, *args, **kwargs)
 requests.Session.request = _patched_request
 
@@ -422,12 +421,29 @@ class MarketProvider:
     def _fetch_hk_hist_fallback(self, symbol):
         print(f"   ⚡ [API] 请求 AkShare 港股历史日线 (兜底): {symbol}...")
         try:
-            start_date = (datetime.now() - timedelta(days=10)).strftime("%Y%m%d")
+            # 扩大时间范围，确保大概率能取到至少2条数据（应对周末/节假日）
+            start_date = (datetime.now() - timedelta(days=20)).strftime("%Y%m%d")
             # [Fix V3.60] 移除 adjust="qfq"，解决 Pandas DatetimeIndex 切片报错问题
             df = ak.stock_hk_hist(symbol=symbol, period="daily", start_date=start_date, adjust="")
-            if not df.empty:
+            
+            # 逻辑修正：必须有至少2条数据才能计算涨跌幅
+            if not df.empty and len(df) >= 2:
+                latest = df.iloc[-1]  # 最新一天（可能是今天或昨天）
+                prev = df.iloc[-2]    # 前一天
+                
+                return {
+                    'price': float(latest['收盘']), 
+                    'prev_close': float(prev['收盘']),  # 使用前一天的收盘价作为基准
+                    'source': 'AkShare_Hist_Fallback'
+                }
+            elif not df.empty:
+                # 极端情况只有1条数据，只能给0涨跌幅
                 latest = df.iloc[-1]
-                return {'price': float(latest['收盘']), 'prev_close': float(latest['收盘']), 'source': 'AkShare_Hist_Fallback'}
+                return {
+                    'price': float(latest['收盘']), 
+                    'prev_close': float(latest['收盘']), 
+                    'source': 'AkShare_Hist_Fallback'
+                }
         except Exception as e: 
             print(f"     ❌ AkShare 港股兜底失败: {e}")
         return None

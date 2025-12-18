@@ -215,6 +215,57 @@ class KronosAdapter:
             print(f"   ⚠️ 推理层报错: {e}")
             return None, 0.0
 
+    def predict_trend(self, df_hist, pred_len=5, debug=False):
+        """
+        [适配器接口] 专为 finance_core 提供包含 DataFrame 的原始预测结果。
+        它补充了 'cum_pct_chg' 字段并生成趋势描述。
+        """
+        if not self.is_active or df_hist is None or df_hist.empty:
+            return "模型未就绪", 0.0, None
+
+        # 1. 调用底层核心推理逻辑 (获取原始预测数据)
+        pred_df, conf = self._predict_real_logic(df_hist, pred_len=pred_len)
+
+        if pred_df is None or pred_df.empty:
+            return "推理失败", 0.0, None
+
+        try:
+            # 2. 计算累计涨跌幅 (cum_pct_chg)
+            # 获取基准价格：优先取历史数据最后一条的收盘价
+            close_col = next((c for c in df_hist.columns if c.lower() == 'close'), None)
+            
+            if close_col and close_col in df_hist.columns:
+                base_price = float(df_hist.iloc[-1][close_col])
+            else:
+                # 如果历史数据没有 close 列，降级使用预测第一天的 open
+                base_price = float(pred_df.iloc[0]['open']) if 'open' in pred_df.columns else float(pred_df.iloc[0]['close'])
+
+            # 计算相对于基准价的涨跌幅 (%)
+            # 注意：_predict_real_logic 返回的 close 是绝对价格
+            pred_df['cum_pct_chg'] = ((pred_df['close'] - base_price) / base_price) * 100
+            
+            # 3. 生成 T+1 趋势描述 (用于日志打印)
+            t1_chg = pred_df.iloc[0]['cum_pct_chg']
+            if t1_chg > 0.3:
+                trend = "看涨"
+            elif t1_chg < -0.3:
+                trend = "看跌"
+            else:
+                trend = "震荡"
+            
+            pred_desc = f"{trend} ({t1_chg:+.2f}%)"
+
+            # 返回：(描述字符串, 置信度, 包含 cum_pct_chg 的 DataFrame)
+            return pred_desc, conf, pred_df
+
+        except Exception as e:
+            if debug:
+                print(f"⚠️ predict_trend 数据处理异常: {e}")
+                import traceback
+                traceback.print_exc()
+            return "数据异常", 0.0, None
+
+
 if __name__ == "__main__":
     # 单元测试
     adapter = KronosAdapter(model_size="small")

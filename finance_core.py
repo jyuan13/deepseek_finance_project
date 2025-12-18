@@ -54,6 +54,7 @@ from datetime import datetime
 
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
+        # 处理 Numpy 类型
         if isinstance(obj, np.integer):
             return int(obj)
         elif isinstance(obj, np.floating):
@@ -62,6 +63,15 @@ class NumpyEncoder(json.JSONEncoder):
             return obj.tolist()
         elif isinstance(obj, np.bool_):
             return bool(obj)
+        
+        # [Fix] 新增：处理 Pandas DataFrame (转为字典列表)
+        elif isinstance(obj, pd.DataFrame):
+            return obj.to_dict(orient='records')
+        
+        # [Fix] 新增：处理 Pandas Timestamp / datetime
+        elif isinstance(obj, (pd.Timestamp, datetime)):
+            return obj.strftime('%Y-%m-%d %H:%M:%S')
+            
         return json.JSONEncoder.default(self, obj)
 
 class FinanceCore:
@@ -103,7 +113,7 @@ class FinanceCore:
             {"name": "Nikkei 225 (JP)", "symbol": "^N225", "market": "Global"}
         ]
 
-    def scan_macro_environment(self, predict=False, debug=False):
+    def scan_macro_environment(self, predict=False, debug=False):   
         print("🌍 正在扫描宏观环境 (读取本地缓存/联网)...")
         macro_data = {}
         try:
@@ -126,8 +136,10 @@ class FinanceCore:
                     market = target['market']
                     name = target['name']
                     
+                    # 获取历史数据
                     df_hist = self.fdm.provider.fetch_history_kline(symbol, market=market)
                     if not df_hist.empty:
+                        # 尝试拼接最新 Snapshot (如果历史数据未包含今日)
                         snapshot, valid = self.fdm.get_realtime_snapshot(symbol)
                         if valid and snapshot.get('price'):
                             last_hist_date = pd.to_datetime(df_hist.iloc[-1]['date']).date()
@@ -142,17 +154,28 @@ class FinanceCore:
                                 }])
                                 df_hist = pd.concat([df_hist, new_row], ignore_index=True)
                     
+                        # 执行预测
                         pred_desc, conf, pred_df = kronos.predict_trend(df_hist, pred_len=5, debug=debug)
-                        print(f"   🔮 {name:<18} | T+1: {pred_desc} | Conf: {conf}")
+                        
+                        # [Log Fix] 在控制台打印 5日目标，而不仅仅是 T+1
+                        t5_target = "N/A"
+                        if pred_df is not None and len(pred_df) >= 5:
+                            t5_price = pred_df.iloc[-1]['close']
+                            t5_chg = pred_df.iloc[-1]['cum_pct_chg']
+                            t5_target = f"T+5: {t5_chg:+.2f}%"
+                        
+                        print(f"   🔮 {name:<18} | {pred_desc} | {t5_target} | Conf: {conf:.2f}")
                         
                         if pred_df is not None:
                             t1_row = pred_df.iloc[0]
                             macro_data['Kronos_Detail'].append({
                                 'name': name,
+                                'symbol': symbol,
                                 'date': t1_row['date'].strftime('%m-%d'),
                                 'close': f"{t1_row['close']:.2f}",
                                 'chg': f"{t1_row['cum_pct_chg']:+.2f}%",
-                                'conf': conf
+                                'conf': conf,
+                                'forecast_df': pred_df # 保留完整预测数据供报告使用
                             })
 
             if macro_liquidity:
@@ -317,6 +340,7 @@ Please think and output strictly in Chinese.
             real_change_pct = idx_change_pct
             currency_info = ""
             
+            # 汇率修正逻辑
             if symbol.startswith("^") and symbol != "^HSI": 
                 usd_rate, usd_chg = fx_data
                 real_change_pct = idx_change_pct + usd_chg
@@ -335,9 +359,17 @@ Please think and output strictly in Chinese.
         else:
             print("   📰 关联舆情: 暂无显著新闻")
         
+        # [Fix] 修正市场类型判断，避免 HSTECH/N225 误入 AkShare US 接口
+        market_type = "A"
+        if symbol.startswith("^") or symbol == "GC=F":
+            if "HSI" in symbol or "HSTECH" in symbol or "N225" in symbol:
+                market_type = "Global" # 走 YFinance -> AkShare Index (Global)
+            else:
+                market_type = "US"     # 走 YFinance -> AkShare US
+                
         ma_trend = "数据不足" 
         try:
-            df = self.fdm.provider.fetch_history_kline(symbol, market="US" if symbol.startswith("^") else "A")
+            df = self.fdm.provider.fetch_history_kline(symbol, market=market_type)
             if not df.empty and len(df) > 20:
                  ma20 = df['close'].rolling(20).mean().iloc[-1]
                  if valid and snapshot['price'] > ma20: ma_trend = "多头 ( > MA20)"
@@ -382,6 +414,14 @@ Please think and output strictly in Chinese.
         result_json['time'] = datetime.now().strftime('%m-%d %H:%M')
         result_json['shadow_nav'] = f"{real_change_pct:+.2f}%" if valid else "N/A"
         result_json['risk_msg'] = f"今日 {today_pnl_amt:+.0f}元" if valid else "行情缺失"
+        
+        # [Fix] 关键：将 5日预测数据注入结果，供 Report 模块生成表格
+        if macro_context and 'Kronos_Detail' in macro_context:
+            for item in macro_context['Kronos_Detail']:
+                # 尝试匹配 symbol (精确) 或 name (模糊)
+                if item.get('symbol') == symbol or item.get('name') == name:
+                    result_json['forecast_df'] = item.get('forecast_df')
+                    break
         
         return result_json
 
